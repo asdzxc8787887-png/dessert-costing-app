@@ -114,6 +114,17 @@ const App = () => {
 
   const [modal, setModal] = useState({ visible: false, title: '', message: '', onConfirm: null });
 
+  // 輔助函式: 處理從 Firestore 讀取的數字欄位
+  const cleanNumber = (value) => {
+    // 確保 null, undefined 或非數字都轉為 0
+    return isNaN(parseFloat(value)) ? 0 : parseFloat(value);
+  };
+    // 輔助函式: 處理從 Firestore 讀取的淨料率欄位
+    const cleanNetYield = (value) => {
+        const cleaned = cleanNumber(value);
+        return cleaned === 0 ? 100 : cleaned; // 如果為 0 則預設為 100
+    };
+
   // 1. Firebase 初始化和身份驗證
   useEffect(() => {
     try {
@@ -163,19 +174,49 @@ const App = () => {
 
     // 原始物料監聽器
     const unsubRaw = onSnapshot(collection(db, getCollectionPath('rawMaterials')), (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const data = snapshot.docs.map(doc => {
+          const raw = doc.data();
+          return {
+              id: doc.id, 
+              ...raw,
+              unitPrice: cleanNumber(raw.unitPrice),
+              specQty: cleanNumber(raw.specQty),
+              netYield: cleanNetYield(raw.netYield), // 確保淨料率不為 0 或 null
+          };
+      });
       setRawMaterials(data);
     }, (error) => console.error("Error fetching raw materials: ", error));
 
     // 包材監聽器
     const unsubPackaging = onSnapshot(collection(db, getCollectionPath('packagingMaterials')), (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const data = snapshot.docs.map(doc => {
+          const raw = doc.data();
+          return {
+              id: doc.id,
+              ...raw,
+              unitPrice: cleanNumber(raw.unitPrice),
+              specQty: cleanNumber(raw.specQty),
+              netYield: cleanNetYield(raw.netYield), // 確保淨料率不為 0 或 null
+          };
+      });
       setPackagingMaterials(data);
     }, (error) => console.error("Error fetching packaging materials: ", error));
 
     // 食譜監聽器
     const unsubRecipes = onSnapshot(collection(db, getCollectionPath('recipes')), (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const data = snapshot.docs.map(doc => {
+          const raw = doc.data();
+          return {
+              id: doc.id,
+              ...raw,
+              outputQty: cleanNumber(raw.outputQty),
+              grossMargin: cleanNumber(raw.grossMargin),
+              electricityCost: cleanNumber(raw.electricityCost),
+              // 清理明細中的數量
+              ingredientDetails: (raw.ingredientDetails || []).map(d => ({ ...d, qty: cleanNumber(d.qty) })),
+              packagingDetails: (raw.packagingDetails || []).map(d => ({ ...d, qty: cleanNumber(d.qty) })),
+          };
+      });
       setRecipes(data);
     }, (error) => console.error("Error fetching recipes: ", error));
 
@@ -351,8 +392,13 @@ const App = () => {
   const MaterialForm = ({ initialData, collectionName, costUnits, priceUnits, onClose }) => {
     const isRawMaterial = collectionName === 'rawMaterials';
     const [item, setItem] = useState({
-      name: '', supplier: '', unitPrice: '', priceUnit: priceUnits[0], specQty: '', costUnit: costUnits[0], netYield: 100,
-      ...(initialData || {}),
+      name: '', 
+      supplier: '', 
+      unitPrice: initialData?.unitPrice || 0, // 修正: 確保初始值為數字 0 (或從數據庫讀取的值)
+      priceUnit: initialData?.priceUnit || priceUnits[0], 
+      specQty: initialData?.specQty || 0, // 修正: 確保初始值為數字 0
+      costUnit: initialData?.costUnit || costUnits[0], 
+      netYield: initialData?.netYield || 100, // 修正: 確保初始值為數字 100
       isRawMaterial: isRawMaterial,
     });
     const [errors, setErrors] = useState({});
@@ -362,16 +408,23 @@ const App = () => {
       const isNumeric = ['unitPrice', 'specQty', 'netYield'].includes(name);
       setItem(prev => ({
         ...prev,
+        // 如果是數字欄位，儲存空字串以允許清空輸入框，否則儲存數字
         [name]: isNumeric ? (value === '' ? '' : parseFloat(value)) : value,
       }));
     };
 
     const validate = () => {
       const newErrors = {};
+      // 注意: 這裡的 item.unitPrice / item.specQty / item.netYield 可能會是 '' (空字串) 或數字
+      // 為了驗證，我們需要轉成數字
+      const unitPrice = parseFloat(item.unitPrice);
+      const specQty = parseFloat(item.specQty);
+      const netYield = parseFloat(item.netYield);
+
       if (!item.name) newErrors.name = '必須填寫名稱';
-      if (!item.unitPrice || isNaN(item.unitPrice) || item.unitPrice <= 0) newErrors.unitPrice = '必須是有效單價';
-      if (!item.specQty || isNaN(item.specQty) || item.specQty <= 0) newErrors.specQty = '必須是有效規格量';
-      if (item.netYield < 0 || item.netYield > 100) newErrors.netYield = '淨料率必須在 0-100% 之間';
+      if (isNaN(unitPrice) || unitPrice <= 0) newErrors.unitPrice = '必須是有效單價';
+      if (isNaN(specQty) || specQty <= 0) newErrors.specQty = '必須是有效規格量';
+      if (isNaN(netYield) || netYield < 0 || netYield > 100) newErrors.netYield = '淨料率必須在 0-100% 之間';
       setErrors(newErrors);
       return Object.keys(newErrors).length === 0;
     };
@@ -382,7 +435,12 @@ const App = () => {
 
       const success = await saveItem(
         collectionName,
-        { ...item, unitPrice: parseFloat(item.unitPrice), specQty: parseFloat(item.specQty), netYield: parseFloat(item.netYield) },
+        { 
+            ...item, 
+            unitPrice: parseFloat(item.unitPrice), 
+            specQty: parseFloat(item.specQty), 
+            netYield: parseFloat(item.netYield) 
+        },
         !initialData
       );
 
@@ -392,6 +450,11 @@ const App = () => {
         setModal({ visible: true, title: '錯誤', message: '資料儲存失敗，請檢查網路連線或權限。', onConfirm: null });
       }
     };
+    
+    // 渲染時使用空字串 fallback，以避免 type="number" 的警告
+    const unitPriceValue = item.unitPrice === 0 ? (initialData ? 0 : '') : item.unitPrice || '';
+    const specQtyValue = item.specQty === 0 ? (initialData ? 0 : '') : item.specQty || '';
+    const netYieldValue = item.netYield === 0 ? (initialData ? 0 : '') : item.netYield || '';
 
     return (
       <div className={`${baseStyle.card} p-4 rounded-xl space-y-3 mb-4`}>
@@ -425,7 +488,7 @@ const App = () => {
                 name="unitPrice"
                 type="number"
                 step="0.01"
-                value={item.unitPrice || ''} // <-- 修正: 確保傳遞空字串而不是 null/undefined
+                value={item.unitPrice || ''} // 使用 item.unitPrice || ''
                 onChange={handleChange}
                 placeholder="單價 ($)"
                 className={`w-full p-2 rounded-lg ${baseStyle.input}`}
@@ -453,7 +516,7 @@ const App = () => {
                 name="specQty"
                 type="number"
                 step="0.001"
-                value={item.specQty || ''} // <-- 修正: 確保傳遞空字串而不是 null/undefined
+                value={item.specQty || ''} // 使用 item.specQty || ''
                 onChange={handleChange}
                 placeholder={isRawMaterial ? "淨重/數量" : "數量"}
                 className={`w-full p-2 rounded-lg ${baseStyle.input}`}
@@ -478,7 +541,7 @@ const App = () => {
           <input
             name="netYield"
             type="number"
-            value={item.netYield || ''} // <-- 修正: 確保傳遞空字串而不是 null/undefined
+            value={item.netYield || ''} // 使用 item.netYield || ''
             onChange={handleChange}
             placeholder="淨料率 (%) (預設 100)"
             min="0"
@@ -636,13 +699,18 @@ const App = () => {
 
   const RecipeForm = ({ initialData, onClose }) => {
     const [recipe, setRecipe] = useState({
-      name: '', category: RECIPE_CATEGORIES[0], outputQty: 1, outputUnit: RECIPE_OUTPUT_UNITS[0], grossMargin: 30, electricityCost: 0,
-      ingredientDetails: [], packagingDetails: [],
-      ...(initialData || {}),
+      name: initialData?.name || '',
+      category: initialData?.category || RECIPE_CATEGORIES[0], 
+      outputQty: initialData?.outputQty || 1, // 修正: 確保初始值為數字 1
+      outputUnit: initialData?.outputUnit || RECIPE_OUTPUT_UNITS[0], 
+      grossMargin: initialData?.grossMargin || 30, // 修正: 確保初始值為數字 30
+      electricityCost: initialData?.electricityCost || 0, // 修正: 確保初始值為數字 0
+      ingredientDetails: initialData?.ingredientDetails || [], 
+      packagingDetails: initialData?.packagingDetails || [],
     });
     const [errors, setErrors] = useState({});
-    const [newIngredient, setNewIngredient] = useState({ materialId: '', qty: 1 });
-    const [newPackaging, setNewPackaging] = useState({ materialId: '', qty: 1 });
+    const [newIngredient, setNewIngredient] = useState({ materialId: '', qty: 0 }); // 修正: 預設 qty 為 0
+    const [newPackaging, setNewPackaging] = useState({ materialId: '', qty: 0 }); // 修正: 預設 qty 為 0
 
     const allMaterials = useMemo(() => [...rawMaterials, ...packagingMaterials], [rawMaterials, packagingMaterials]);
 
@@ -651,27 +719,26 @@ const App = () => {
       const isNumeric = ['outputQty', 'grossMargin', 'electricityCost'].includes(name);
       setRecipe(prev => ({
         ...prev,
+        // 如果是數字欄位，儲存空字串以允許清空輸入框，否則儲存數字
         [name]: isNumeric ? (value === '' ? '' : parseFloat(value)) : value,
       }));
     };
 
     const handleAddDetail = (type) => {
-      if (type === 'ingredient') {
-        if (newIngredient.materialId && newIngredient.qty > 0) {
-          setRecipe(prev => ({
-            ...prev,
-            ingredientDetails: [...prev.ingredientDetails, { ...newIngredient, qty: parseFloat(newIngredient.qty) }]
-          }));
-          setNewIngredient({ materialId: '', qty: 1 });
-        }
-      } else {
-        if (newPackaging.materialId && newPackaging.qty > 0) {
-          setRecipe(prev => ({
-            ...prev,
-            packagingDetails: [...prev.packagingDetails, { ...newPackaging, qty: parseFloat(newPackaging.qty) }]
-          }));
-          setNewPackaging({ materialId: '', qty: 1 });
-        }
+      const detail = type === 'ingredient' ? newIngredient : newPackaging;
+      const setter = type === 'ingredient' ? setNewIngredient : setNewPackaging;
+      
+      const qty = parseFloat(detail.qty);
+
+      if (detail.materialId && !isNaN(qty) && qty > 0) {
+        setRecipe(prev => ({
+          ...prev,
+          [type === 'ingredient' ? 'ingredientDetails' : 'packagingDetails']: [
+            ...prev[type === 'ingredient' ? 'ingredientDetails' : 'packagingDetails'], 
+            { ...detail, qty: qty }
+          ]
+        }));
+        setter({ materialId: '', qty: 0 }); // 重設為 0
       }
     };
 
@@ -684,8 +751,10 @@ const App = () => {
 
     const validate = () => {
       const newErrors = {};
+      const outputQty = parseFloat(recipe.outputQty);
+
       if (!recipe.name) newErrors.name = '必須填寫食品名稱';
-      if (!recipe.outputQty || isNaN(recipe.outputQty) || recipe.outputQty <= 0) newErrors.outputQty = '必須是有效產出數量';
+      if (isNaN(outputQty) || outputQty <= 0) newErrors.outputQty = '必須是有效產出數量';
       setErrors(newErrors);
       return Object.keys(newErrors).length === 0;
     };
@@ -696,7 +765,12 @@ const App = () => {
 
       const success = await saveItem(
         'recipes',
-        { ...recipe, outputQty: parseFloat(recipe.outputQty), grossMargin: parseFloat(recipe.grossMargin), electricityCost: parseFloat(recipe.electricityCost) },
+        { 
+            ...recipe, 
+            outputQty: parseFloat(recipe.outputQty), 
+            grossMargin: parseFloat(recipe.grossMargin), 
+            electricityCost: parseFloat(recipe.electricityCost) 
+        },
         !initialData
       );
 
@@ -739,7 +813,7 @@ const App = () => {
               <input
                 name="outputQty"
                 type="number"
-                value={recipe.outputQty || ''} // <-- 修正
+                value={recipe.outputQty || ''} // 使用 recipe.outputQty || ''
                 onChange={handleChange}
                 placeholder="產出數量"
                 className={`w-full p-2 rounded-lg ${baseStyle.input}`}
@@ -763,7 +837,7 @@ const App = () => {
             <input
               name="grossMargin"
               type="number"
-              value={recipe.grossMargin || ''} // <-- 修正
+              value={recipe.grossMargin || ''} // 使用 recipe.grossMargin || ''
               onChange={handleChange}
               placeholder="毛利率 (%)"
               min="0"
@@ -774,7 +848,7 @@ const App = () => {
               name="electricityCost"
               type="number"
               step="0.01"
-              value={recipe.electricityCost || ''} // <-- 修正
+              value={recipe.electricityCost || ''} // 使用 recipe.electricityCost || ''
               onChange={handleChange}
               placeholder="電費成本 ($)"
               min="0"
@@ -837,7 +911,7 @@ const App = () => {
             type="number"
             min="0"
             step="0.01"
-            value={newDetail.qty || ''} // <-- 修正
+            value={newDetail.qty || ''} // 使用 newDetail.qty || ''
             onChange={(e) => setNewDetail(prev => ({ ...prev, qty: e.target.value }))}
             placeholder="用量"
             className={`w-1/4 p-2 text-xs rounded-lg ${baseStyle.input}`}
