@@ -323,12 +323,22 @@
             if (!db || !isAuthReady) return console.error("Database not ready.");
 
             const path = `artifacts/${appId}/public/data/${collectionName}`;
+            
+            // 移除 item 上的 id 欄位，確保不寫入資料庫
+            const { id, ...dataToSave } = item; 
 
             try {
               if (isNew) {
-                await addDoc(collection(db, path), item);
+                // 新增：使用 addDoc，不需提供 ID
+                await addDoc(collection(db, path), dataToSave);
               } else {
-                await setDoc(doc(db, path, item.id), item);
+                // 更新：需要 ID
+                if (!id) {
+                    // 修正: 如果是更新操作但缺少 ID，拋出錯誤以阻止 Firestore 呼叫
+                    throw new Error("Attempted to update item without ID."); 
+                }
+                // 使用 setDoc 並提供 doc(db, path, id)
+                await setDoc(doc(db, path, id), dataToSave);
               }
               return true;
             } catch (error) {
@@ -339,6 +349,7 @@
 
           const deleteItem = (collectionName, id) => {
             if (!db || !isAuthReady) return console.error("Database not ready.");
+            if (!id) return console.error("Error: Attempted to delete item without ID."); // 額外檢查
 
             setModal({
               visible: true,
@@ -483,14 +494,16 @@
           const MaterialForm = ({ initialData, collectionName, costUnits, priceUnits, onClose }) => {
             const isRawMaterial = collectionName === 'rawMaterials';
             const [item, setItem] = useState({
-              name: '', 
-              supplier: '', 
+              name: initialData?.name || '', 
+              supplier: initialData?.supplier || '', 
               unitPrice: initialData?.unitPrice || 0, // 修正: 確保初始值為數字 0 (或從數據庫讀取的值)
               priceUnit: initialData?.priceUnit || priceUnits[0], 
               specQty: initialData?.specQty || 0, // 修正: 確保初始值為數字 0
               costUnit: initialData?.costUnit || costUnits[0], 
               netYield: initialData?.netYield || 100, // 修正: 確保初始值為數字 100
               isRawMaterial: isRawMaterial,
+              // 確保 ID 被保留在狀態中
+              id: initialData?.id || undefined
             });
             const [errors, setErrors] = useState({});
 
@@ -528,6 +541,7 @@
                 collectionName,
                 { 
                     ...item, 
+                    // 確保儲存時是數字
                     unitPrice: parseFloat(item.unitPrice), 
                     specQty: parseFloat(item.specQty), 
                     netYield: parseFloat(item.netYield) 
@@ -798,6 +812,7 @@
               electricityCost: initialData?.electricityCost || 0, // 修正: 確保初始值為數字 0
               ingredientDetails: initialData?.ingredientDetails || [], 
               packagingDetails: initialData?.packagingDetails || [],
+              id: initialData?.id || undefined // 確保 ID 被保留在狀態中
             });
             const [errors, setErrors] = useState({});
             const [newIngredient, setNewIngredient] = useState({ materialId: '', qty: 0 }); // 修正: 預設 qty 為 0
