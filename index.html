@@ -1,1253 +1,1345 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, doc, addDoc, setDoc, deleteDoc, onSnapshot, collection, query, orderBy, setLogLevel } from 'firebase/firestore';
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>甜點成本分析 (Dessert Cost)</title>
+    <!-- 載入 Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 載入 React 和 ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <!-- 載入 Babel (將 JSX 轉換為瀏覽器可讀的 JS) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-gray-900">
+    <!-- 這是 React 應用程式的根容器 -->
+    <div id="root"></div>
 
-// 確保在運行時使用 Canvas 環境提供的全局變數
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : undefined;
+    <!-- 步驟 1: 專門的模組腳本，用於導入 Firebase 函式並將其暴露給全域 window.fbs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, addDoc, setDoc, deleteDoc, onSnapshot, collection, query, orderBy, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // 將所有需要的 Firebase 函式暴露到全域 window.fbs 物件
+        window.fbs = {
+            initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged,
+            getFirestore, doc, addDoc, setDoc, deleteDoc, onSnapshot, collection, query, orderBy, setLogLevel
+        };
+    </script>
+    
+    <!-- 步驟 2: Babel 腳本，使用 React 和全域的 window.fbs.xxx 函式 -->
+    <script type="text/babel">
+        
+        const { useState, useEffect, useMemo } = React;
+        // 使用解構賦值，如果 window.fbs 尚未載入，則使用空物件，這是一個 fallback 確保程式碼不會崩潰
+        const { 
+            initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, 
+            getFirestore, doc, addDoc, setDoc, deleteDoc, onSnapshot, collection, query, orderBy, setLogLevel 
+        } = window.fbs || {};
 
-// --- 介面元件/常數定義 ---
+        // 確保在運行時使用 Canvas 環境提供的全局變數
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        // 替換為您的 Firebase 配置（從先前對話中取得的真實配置）
+        const firebaseConfig = {
+            apiKey: "AIzaSyAA65eP2I7mGMKpPP9wHAzVv14pG_BZ96g",
+            authDomain: "dessert-d852c.firebaseapp.com",
+            projectId: "dessert-d852c",
+            storageBucket: "dessert-d852c.firebasestorage.app",
+            messagingSenderId: "753350259966",
+            appId: "1:753350259966:web:d419ac0e6796294db421af",
+            measurementId: "G-MZN2NXWHMV"
+        };
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : undefined;
 
-// 採購單位下拉式選單 (原料)
-const RAW_MATERIAL_PRICE_UNITS = ['袋', '箱', '桶', '件', '組', '公斤', '公升', '瓶', '盒', '罐'];
-// 成本核算單位下拉式選單 (原料)
-const RAW_MATERIAL_COST_UNITS = ['g', 'ml', '個', '片', '支', '組'];
 
-// 採購單位下拉式選單 (包材)
-const PACKAGING_PRICE_UNITS = ['袋', '箱', '件', '組', '盒'];
-// 成本核算單位下拉式選單 (包材)
-const PACKAGING_COST_UNITS = ['個', '支', '組', '張'];
+        // --- 介面元件/常數定義 ---
 
-// 食譜分類
-const RECIPE_CATEGORIES = ['蛋糕', '餅乾', '瑪德蓮', '達克瓦茲'];
-// 產量單位
-const RECIPE_OUTPUT_UNITS = ['份', '顆', '盒', '罐', '杯'];
+        // 採購單位下拉式選單 (原料)
+        const RAW_MATERIAL_PRICE_UNITS = ['袋', '箱', '桶', '件', '組', '公斤', '公升', '瓶', '盒', '罐'];
+        // 成本核算單位下拉式選單 (原料)
+        const RAW_MATERIAL_COST_UNITS = ['g', 'ml', '個', '片', '支', '組'];
 
-const baseStyle = {
-  bg: 'bg-gray-900',
-  text: 'text-amber-300',
-  textSub: 'text-amber-500',
-  input: 'bg-gray-800 border-amber-500/50 text-white placeholder-amber-200/50 focus:ring-amber-500',
-  buttonPrimary: 'bg-amber-600 hover:bg-amber-700 text-gray-900 font-bold',
-  buttonSecondary: 'bg-gray-700 hover:bg-gray-600 text-amber-300',
-  card: 'bg-gray-800/70 border border-amber-900/50',
-};
+        // 採購單位下拉式選單 (包材)
+        const PACKAGING_PRICE_UNITS = ['袋', '箱', '件', '組', '盒'];
+        // 成本核算單位下拉式選單 (包材)
+        const PACKAGING_COST_UNITS = ['個', '支', '組', '張'];
 
-// 輔助函式: 將資料轉換為 CSV 格式 (Excel 匯出)
-const exportToExcel = (data, filename) => {
-  if (!data || data.length === 0) {
-    console.error('No data to export.');
-    return;
-  }
+        // 食譜分類
+        const RECIPE_CATEGORIES = ['蛋糕', '餅乾', '瑪德蓮', '達克瓦茲'];
+        // 產量單位
+        const RECIPE_OUTPUT_UNITS = ['份', '顆', '盒', '罐', '杯'];
 
-  // 1. 定義標頭映射，並排除複雜的巢狀陣列欄位 (ingredientDetails, packagingDetails, id)
-  const headerMap = {
-    name: '名稱',
-    supplier: '供應商',
-    unitPrice: '採購單價($)',
-    priceUnit: '採購價格單位',
-    specQty: '採購規格量',
-    costUnit: '成本核算單位',
-    netYield: '淨料率(%)',
-    category: '分類',
-    outputQty: '產出數量',
-    outputUnit: '產量單位',
-    grossMargin: '毛利率(%)',
-    electricityCost: '電費成本($)',
-    costPerUnit: '每單位成本($)',
-    sellingPrice: '建議售價($)',
-  };
+        const baseStyle = {
+          bg: 'bg-gray-900',
+          text: 'text-amber-300',
+          textSub: 'text-amber-500',
+          input: 'bg-gray-800 border-amber-500/50 text-white placeholder-amber-200/50 focus:ring-amber-500',
+          buttonPrimary: 'bg-amber-600 hover:bg-amber-700 text-gray-900 font-bold',
+          buttonSecondary: 'bg-gray-700 hover:bg-gray-600 text-amber-300',
+          card: 'bg-gray-800/70 border border-amber-900/50',
+        };
 
-  const EXCLUDED_KEYS = ['id', 'ingredientDetails', 'packagingDetails', 'isRawMaterial'];
-
-  // 2. 過濾出最終要匯出的欄位
-  let allKeys = new Set();
-  data.forEach(item => {
-    Object.keys(item).forEach(key => allKeys.add(key));
-  });
-
-  const headers = Array.from(allKeys)
-    .filter(key => !EXCLUDED_KEYS.includes(key))
-    .filter(key => headerMap[key]); // 確保只包含定義了中文名稱的欄位
-
-  const csvHeaders = headers.map(key => headerMap[key]).join(',');
-
-  // 3. 創建 CSV 行內容
-  const csvRows = data.map(row => {
-    return headers.map(key => {
-      let value = row[key];
-      // 如果是計算出的成本，確保它存在 (只在 MaterialListPage 和 RecipePricingPage 呼叫時會被加入)
-      if (key === 'costPerUnit' || key === 'sellingPrice') {
-        value = value || 0;
-      }
-      
-      // 確保所有值都被視為字串，並處理逗號
-      return `"${String(value || '').replace(/"/g, '""')}"`;
-    }).join(',');
-  });
-
-  // 4. 創建 Blob 並使用正確的 .csv 副檔名
-  const csvContent = [csvHeaders, ...csvRows].join('\n');
-  const blob = new Blob(['\ufeff', csvContent], { type: 'text/csv;charset=utf-8;' }); // 加入 BOM 確保中文正確顯示
-  const link = document.createElement('a');
-  link.href = URL.createObjectURL(blob);
-  link.download = `${filename}.csv`; // **修正：使用正確的 .csv 副檔名**
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-};
-
-// --- 主要應用程式元件 ---
-
-const App = () => {
-  const [currentPage, setCurrentPage] = useState('rawMaterials');
-  const [db, setDb] = useState(null);
-  const [auth, setAuth] = useState(null);
-  const [userId, setUserId] = useState(null);
-  const [isAuthReady, setIsAuthReady] = useState(false);
-
-  const [rawMaterials, setRawMaterials] = useState([]);
-  const [packagingMaterials, setPackagingMaterials] = useState([]);
-  const [recipes, setRecipes] = useState([]);
-
-  const [modal, setModal] = useState({ visible: false, title: '', message: '', onConfirm: null });
-
-  // 輔助函式: 處理從 Firestore 讀取的數字欄位
-  const cleanNumber = (value) => {
-    // 確保 null, undefined 或非數字都轉為 0
-    return isNaN(parseFloat(value)) ? 0 : parseFloat(value);
-  };
-    // 輔助函式: 處理從 Firestore 讀取的淨料率欄位
-    const cleanNetYield = (value) => {
-        const cleaned = cleanNumber(value);
-        return cleaned === 0 ? 100 : cleaned; // 如果為 0 則預設為 100
-    };
-
-  // 1. Firebase 初始化和身份驗證
-  useEffect(() => {
-    try {
-      // 啟用 Firebase 調試日誌
-      setLogLevel('debug');
-      const app = initializeApp(firebaseConfig);
-      const authInstance = getAuth(app);
-      const dbInstance = getFirestore(app);
-
-      setAuth(authInstance);
-      setDb(dbInstance);
-
-      // 設置身份驗證監聽器
-      const unsubscribe = onAuthStateChanged(authInstance, async (user) => {
-        if (user) {
-          setUserId(user.uid);
-        } else {
-          // 如果沒有用戶，嘗試使用自定義 token 或匿名登錄
-          try {
-            if (initialAuthToken) {
-              await signInWithCustomToken(authInstance, initialAuthToken);
-            } else {
-              await signInAnonymously(authInstance);
-            }
-          } catch (error) {
-            console.error("Firebase 登錄失敗:", error);
-            // 匿名登錄失敗時也設置 ready，但 userId 為 null
+        // 輔助函式: 將資料轉換為 CSV 格式 (Excel 匯出)
+        const exportToExcel = (data, filename) => {
+          if (!data || data.length === 0) {
+            console.error('No data to export.');
+            return;
           }
-        }
-        setIsAuthReady(true);
-      });
 
-      return () => unsubscribe();
-    } catch (error) {
-      console.error("Firebase 初始化失敗:", error);
-      setIsAuthReady(true);
-    }
-  }, []);
-
-  // 2. 數據庫監聽器
-  useEffect(() => {
-    if (!isAuthReady || !db) return;
-
-    // 定義 Firestore 集合路徑 (公開/共享路徑)
-    const getCollectionPath = (collectionName) =>
-      `artifacts/${appId}/public/data/${collectionName}`;
-
-    // 原始物料監聽器
-    const unsubRaw = onSnapshot(collection(db, getCollectionPath('rawMaterials')), (snapshot) => {
-      const data = snapshot.docs.map(doc => {
-          const raw = doc.data();
-          return {
-              id: doc.id, 
-              ...raw,
-              unitPrice: cleanNumber(raw.unitPrice),
-              specQty: cleanNumber(raw.specQty),
-              netYield: cleanNetYield(raw.netYield), // 確保淨料率不為 0 或 null
+          // 1. 定義標頭映射，並排除複雜的巢狀陣列欄位 (ingredientDetails, packagingDetails, id)
+          const headerMap = {
+            name: '名稱',
+            supplier: '供應商',
+            unitPrice: '採購單價($)',
+            priceUnit: '採購價格單位',
+            specQty: '採購規格量',
+            costUnit: '成本核算單位',
+            netYield: '淨料率(%)',
+            category: '分類',
+            outputQty: '產出數量',
+            outputUnit: '產量單位',
+            grossMargin: '毛利率(%)',
+            electricityCost: '電費成本($)',
+            costPerUnit: '每單位成本($)',
+            sellingPrice: '建議售價($)',
           };
-      });
-      setRawMaterials(data);
-    }, (error) => console.error("Error fetching raw materials: ", error));
 
-    // 包材監聽器
-    const unsubPackaging = onSnapshot(collection(db, getCollectionPath('packagingMaterials')), (snapshot) => {
-      const data = snapshot.docs.map(doc => {
-          const raw = doc.data();
-          return {
-              id: doc.id,
-              ...raw,
-              unitPrice: cleanNumber(raw.unitPrice),
-              specQty: cleanNumber(raw.specQty),
-              netYield: cleanNetYield(raw.netYield), // 確保淨料率不為 0 或 null
+          const EXCLUDED_KEYS = ['id', 'ingredientDetails', 'packagingDetails', 'isRawMaterial'];
+
+          // 2. 過濾出最終要匯出的欄位
+          let allKeys = new Set();
+          data.forEach(item => {
+            Object.keys(item).forEach(key => allKeys.add(key));
+          });
+
+          const headers = Array.from(allKeys)
+            .filter(key => !EXCLUDED_KEYS.includes(key))
+            .filter(key => headerMap[key]); // 確保只包含定義了中文名稱的欄位
+
+          const csvHeaders = headers.map(key => headerMap[key]).join(',');
+
+          // 3. 創建 CSV 行內容
+          const csvRows = data.map(row => {
+            return headers.map(key => {
+              let value = row[key];
+              // 如果是計算出的成本，確保它存在 (只在 MaterialListPage 和 RecipePricingPage 呼叫時會被加入)
+              if (key === 'costPerUnit' || key === 'sellingPrice') {
+                value = value || 0;
+              }
+              
+              // 確保所有值都被視為字串，並處理逗號
+              return `"${String(value || '').replace(/"/g, '""')}"`;
+            }).join(',');
+          });
+
+          // 4. 創建 Blob 並使用正確的 .csv 副檔名
+          const csvContent = [csvHeaders, ...csvRows].join('\n');
+          const blob = new Blob(['\ufeff', csvContent], { type: 'text/csv;charset=utf-8;' }); // 加入 BOM 確保中文正確顯示
+          const link = document.createElement('a');
+          link.href = URL.createObjectURL(blob);
+          link.download = `${filename}.csv`; // **修正：使用正確的 .csv 副檔名**
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        };
+
+        // --- 主要應用程式元件 ---
+
+        const App = () => {
+          const [currentPage, setCurrentPage] = useState('rawMaterials');
+          const [db, setDb] = useState(null);
+          const [auth, setAuth] = useState(null);
+          const [userId, setUserId] = useState(null);
+          const [isAuthReady, setIsAuthReady] = useState(false);
+
+          const [rawMaterials, setRawMaterials] = useState([]);
+          const [packagingMaterials, setPackagingMaterials] = useState([]);
+          const [recipes, setRecipes] = useState([]);
+
+          const [modal, setModal] = useState({ visible: false, title: '', message: '', onConfirm: null });
+
+          // 輔助函式: 處理從 Firestore 讀取的數字欄位
+          const cleanNumber = (value) => {
+            // 確保 null, undefined 或非數字都轉為 0
+            return isNaN(parseFloat(value)) ? 0 : parseFloat(value);
           };
-      });
-      setPackagingMaterials(data);
-    }, (error) => console.error("Error fetching packaging materials: ", error));
+            // 輔助函式: 處理從 Firestore 讀取的淨料率欄位
+            const cleanNetYield = (value) => {
+                const cleaned = cleanNumber(value);
+                return cleaned === 0 ? 100 : cleaned; // 如果為 0 則預設為 100
+            };
 
-    // 食譜監聽器
-    const unsubRecipes = onSnapshot(collection(db, getCollectionPath('recipes')), (snapshot) => {
-      const data = snapshot.docs.map(doc => {
-          const raw = doc.data();
-          return {
-              id: doc.id,
-              ...raw,
-              outputQty: cleanNumber(raw.outputQty),
-              grossMargin: cleanNumber(raw.grossMargin),
-              electricityCost: cleanNumber(raw.electricityCost),
-              // 清理明細中的數量
-              ingredientDetails: (raw.ingredientDetails || []).map(d => ({ ...d, qty: cleanNumber(d.qty) })),
-              packagingDetails: (raw.packagingDetails || []).map(d => ({ ...d, qty: cleanNumber(d.qty) })),
+          // 1. Firebase 初始化和身份驗證
+          useEffect(() => {
+            // 檢查 Firebase 函式是否已載入
+            if (!initializeApp || !getAuth || !getFirestore) {
+                console.error("Firebase functions not yet loaded.");
+                if (!window.fbs) return; 
+            }
+
+            try {
+              // 啟用 Firebase 調試日誌
+              setLogLevel('debug');
+              const app = initializeApp(firebaseConfig);
+              const authInstance = getAuth(app);
+              const dbInstance = getFirestore(app);
+
+              setAuth(authInstance);
+              setDb(dbInstance);
+
+              // 旗標，用於確保我們只在 onAuthStateChanged 的第一次調用中觸發 sign-in 嘗試
+              let initialCheckDone = false;
+
+              // 設置身份驗證監聽器
+              const unsubscribe = onAuthStateChanged(authInstance, async (user) => {
+                  if (user) {
+                      // Case 1: 已經登入或剛才登入成功
+                      setUserId(user.uid);
+                      initialCheckDone = true;
+                      setIsAuthReady(true); // 設置為 Ready，開始資料載入
+                  } else if (!initialCheckDone) {
+                      // Case 2: 尚未登入，執行初始登入嘗試
+                      initialCheckDone = true; // 標記已檢查，避免無限循環
+                      
+                      const tokenIsValid = (typeof initialAuthToken === 'string' && initialAuthToken.length > 0);
+                      
+                      let signedIn = false;
+
+                      if (tokenIsValid) {
+                          try {
+                              // 嘗試使用自定義 Token
+                              await signInWithCustomToken(authInstance, initialAuthToken);
+                              signedIn = true;
+                              // 如果成功，onAuthStateChanged 會再次調用 (回到 Case 1)
+                          } catch (error) {
+                              // Custom Token 登錄失敗 (auth/custom-token-mismatch)
+                              // 靜默處理預期的 mismatch 錯誤，只在非預期錯誤時記錄
+                              if (error.code && error.code !== 'auth/custom-token-mismatch') {
+                                  console.error("Firebase Custom Token 登錄失敗:", error);
+                              }
+                          }
+                      }
+                      
+                      if (!signedIn) {
+                          // 如果 Custom Token 無效或不存在，則嘗試匿名登入
+                          try {
+                              await signInAnonymously(authInstance);
+                              // 如果成功，onAuthStateChanged 會再次調用 (回到 Case 1)
+                          } catch (anonError) {
+                              console.error("Firebase 匿名登錄失敗:", anonError);
+                              // 如果連匿名登入都失敗，我們仍設定為 ready，但 userId 會是 null
+                              setIsAuthReady(true);
+                          }
+                      }
+                      // 如果 Custom/匿名登入成功，onAuthStateChanged 會再次調用並設定 isAuthReady = true
+                      // 如果登入失敗，但已嘗試過，則在 anonError catch 中設定 isAuthReady = true
+                  } else {
+                      // 如果已經嘗試過登入，但仍沒有用戶 (例如匿名登入也失敗了)，則設置 ready
+                      setIsAuthReady(true);
+                  }
+              });
+
+              return () => unsubscribe();
+            } catch (error) {
+              console.error("Firebase 初始化失敗:", error);
+              setIsAuthReady(true);
+            }
+          }, [initializeApp, getAuth, getFirestore]); // 依賴於暴露的函式
+
+          // 2. 數據庫監聽器
+          useEffect(() => {
+            // 只有在身份驗證準備就緒且 db 實例存在時才開始監聽
+            if (!isAuthReady || !db) return;
+
+            // 定義 Firestore 集合路徑 (公開/共享路徑)
+            const getCollectionPath = (collectionName) =>
+              `artifacts/${appId}/public/data/${collectionName}`;
+
+            // 原始物料監聽器
+            const unsubRaw = onSnapshot(collection(db, getCollectionPath('rawMaterials')), (snapshot) => {
+              const data = snapshot.docs.map(doc => {
+                  const raw = doc.data();
+                  return {
+                      id: doc.id, 
+                      ...raw,
+                      unitPrice: cleanNumber(raw.unitPrice),
+                      specQty: cleanNumber(raw.specQty),
+                      netYield: cleanNetYield(raw.netYield), // 確保淨料率不為 0 或 null
+                  };
+              });
+              setRawMaterials(data);
+            }, (error) => console.error("Error fetching raw materials: ", error));
+
+            // 包材監聽器
+            const unsubPackaging = onSnapshot(collection(db, getCollectionPath('packagingMaterials')), (snapshot) => {
+              const data = snapshot.docs.map(doc => {
+                  const raw = doc.data();
+                  return {
+                      id: doc.id,
+                      ...raw,
+                      unitPrice: cleanNumber(raw.unitPrice),
+                      specQty: cleanNumber(raw.specQty),
+                      netYield: cleanNetYield(raw.netYield), // 確保淨料率不為 0 或 null
+                  };
+              });
+              setPackagingMaterials(data);
+            }, (error) => console.error("Error fetching packaging materials: ", error));
+
+            // 食譜監聽器
+            const unsubRecipes = onSnapshot(collection(db, getCollectionPath('recipes')), (snapshot) => {
+              const data = snapshot.docs.map(doc => {
+                  const raw = doc.data();
+                  return {
+                      id: doc.id,
+                      ...raw,
+                      outputQty: cleanNumber(raw.outputQty),
+                      grossMargin: cleanNumber(raw.grossMargin),
+                      electricityCost: cleanNumber(raw.electricityCost),
+                      // 清理明細中的數量
+                      ingredientDetails: (raw.ingredientDetails || []).map(d => ({ ...d, qty: cleanNumber(d.qty) })),
+                      packagingDetails: (raw.packagingDetails || []).map(d => ({ ...d, qty: cleanNumber(d.qty) })),
+                  };
+              });
+              setRecipes(data);
+            }, (error) => console.error("Error fetching recipes: ", error));
+
+            return () => {
+              unsubRaw();
+              unsubPackaging();
+              unsubRecipes();
+            };
+          }, [isAuthReady, db]);
+
+          // 3. CRUD 基礎功能
+          const saveItem = async (collectionName, item, isNew) => {
+            if (!db || !isAuthReady) return console.error("Database not ready.");
+
+            const path = `artifacts/${appId}/public/data/${collectionName}`;
+
+            try {
+              if (isNew) {
+                await addDoc(collection(db, path), item);
+              } else {
+                await setDoc(doc(db, path, item.id), item);
+              }
+              return true;
+            } catch (error) {
+              console.error(`Error saving item to ${collectionName}: `, error);
+              return false;
+            }
           };
-      });
-      setRecipes(data);
-    }, (error) => console.error("Error fetching recipes: ", error));
 
-    return () => {
-      unsubRaw();
-      unsubPackaging();
-      unsubRecipes();
-    };
-  }, [isAuthReady, db]);
+          const deleteItem = (collectionName, id) => {
+            if (!db || !isAuthReady) return console.error("Database not ready.");
 
-  // 3. CRUD 基礎功能
-  const saveItem = async (collectionName, item, isNew) => {
-    if (!db || !isAuthReady) return console.error("Database not ready.");
+            setModal({
+              visible: true,
+              title: '確認刪除',
+              message: '您確定要刪除此項目嗎？此操作無法撤銷。',
+              onConfirm: async () => {
+                try {
+                  const path = `artifacts/${appId}/public/data/${collectionName}`;
+                  await deleteDoc(doc(db, path, id));
+                  setModal({ visible: false });
+                } catch (error) {
+                  console.error(`Error deleting item from ${collectionName}: `, error);
+                  setModal({ visible: false });
+                }
+              }
+            });
+          };
 
-    const path = `artifacts/${appId}/public/data/${collectionName}`;
+          // 4. 成本計算核心邏輯
+          // 計算單一物料的每核算單位成本 (Unit Cost Per Cost Unit)
+          const calculateUnitCost = (item) => {
+            if (!item.unitPrice || !item.specQty || item.specQty === 0) return 0;
 
-    try {
-      if (isNew) {
-        await addDoc(collection(db, path), item);
-      } else {
-        await setDoc(doc(db, path, item.id), item);
-      }
-      return true;
-    } catch (error) {
-      console.error(`Error saving item to ${collectionName}: `, error);
-      return false;
-    }
-  };
+            const baseCost = item.unitPrice / item.specQty; // 每規格量單價
 
-  const deleteItem = (collectionName, id) => {
-    if (!db || !isAuthReady) return console.error("Database not ready.");
+            const priceUnit = item.priceUnit;
+            const costUnit = item.costUnit;
 
-    setModal({
-      visible: true,
-      title: '確認刪除',
-      message: '您確定要刪除此項目嗎？此操作無法撤銷。',
-      onConfirm: async () => {
-        try {
-          const path = `artifacts/${appId}/public/data/${collectionName}`;
-          await deleteDoc(doc(db, path, id));
-          setModal({ visible: false });
-        } catch (error) {
-          console.error(`Error deleting item from ${collectionName}: `, error);
-          setModal({ visible: false });
-        }
-      }
-    });
-  };
+            let conversionFactor = 1; // 規格量到成本核算單位的轉換因數
 
-  // 4. 成本計算核心邏輯
-  // 計算單一物料的每核算單位成本 (Unit Cost Per Cost Unit)
-  const calculateUnitCost = (item) => {
-    if (!item.unitPrice || !item.specQty || item.specQty === 0) return 0;
+            // 處理公斤/公升到 g/ml 的轉換
+            if (priceUnit === '公斤' && costUnit === 'g') {
+              conversionFactor = 1000;
+            } else if (priceUnit === '公升' && costUnit === 'ml') {
+              conversionFactor = 1000;
+            } else if (priceUnit === '公斤' && costUnit === 'ml') {
+              // 假設密度為 1 (1kg = 1000ml)
+              conversionFactor = 1000;
+            } else if (priceUnit === '公升' && costUnit === 'g') {
+              // 假設密度為 1 (1L = 1000g)
+              conversionFactor = 1000;
+            }
+            // 其他如 袋/箱/件/組/瓶/盒/罐 到 個/片/支/組 的轉換，維持 1:1，因為規格量 (specQty) 應該已設定為可核算的數量。
 
-    const baseCost = item.unitPrice / item.specQty; // 每規格量單價
+            // (每規格量單價 / 轉換因數) * (100 / 淨料率)
+            // 淨料率為 100% 時，除以 1
+            const netYieldFactor = (item.netYield || 100) / 100;
 
-    const priceUnit = item.priceUnit;
-    const costUnit = item.costUnit;
+            // 單價 ($) / (規格量 * 轉換因數) / 淨料率
+            const cost = (item.unitPrice / item.specQty / conversionFactor) / netYieldFactor;
+            return isNaN(cost) || !isFinite(cost) ? 0 : cost; // 避免 NaN 或 Infinity
+          };
 
-    let conversionFactor = 1; // 規格量到成本核算單位的轉換因數
+          // 將所有物料轉換為一個易於查找的成本映射表 (key: id, value: costPerUnit)
+          const costMap = useMemo(() => {
+            const map = new Map();
+            [...rawMaterials, ...packagingMaterials].forEach(item => {
+              map.set(item.id, calculateUnitCost(item));
+            });
+            return map;
+          }, [rawMaterials, packagingMaterials]);
 
-    // 處理公斤/公升到 g/ml 的轉換
-    if (priceUnit === '公斤' && costUnit === 'g') {
-      conversionFactor = 1000;
-    } else if (priceUnit === '公升' && costUnit === 'ml') {
-      conversionFactor = 1000;
-    } else if (priceUnit === '公斤' && costUnit === 'ml') {
-      // 假設密度為 1 (1kg = 1000ml)
-      conversionFactor = 1000;
-    } else if (priceUnit === '公升' && costUnit === 'g') {
-      // 假設密度為 1 (1L = 1000g)
-      conversionFactor = 1000;
-    }
-    // 其他如 袋/箱/件/組/瓶/盒/罐 到 個/片/支/組 的轉換，維持 1:1，因為規格量 (specQty) 應該已設定為可核算的數量。
+          // 計算食譜的總成本和建議售價
+          const calculateRecipeCosts = (recipe) => {
+            let totalCost = 0;
 
-    // (每規格量單價 / 轉換因數) * (100 / 淨料率)
-    // 淨料率為 100% 時，除以 1
-    const netYieldFactor = (item.netYield || 100) / 100;
+            // a. 食材成本
+            (recipe.ingredientDetails || []).forEach(detail => {
+              const unitCost = costMap.get(detail.materialId) || 0;
+              totalCost += unitCost * detail.qty;
+            });
 
-    // 單價 ($) / (規格量 * 轉換因數) / 淨料率
-    const cost = (item.unitPrice / item.specQty / conversionFactor) / netYieldFactor;
-    return isNaN(cost) || !isFinite(cost) ? 0 : cost; // 避免 NaN 或 Infinity
-  };
+            // b. 包材成本
+            (recipe.packagingDetails || []).forEach(detail => {
+              const unitCost = costMap.get(detail.materialId) || 0;
+              totalCost += unitCost * detail.qty;
+            });
 
-  // 將所有物料轉換為一個易於查找的成本映射表 (key: id, value: costPerUnit)
-  const costMap = useMemo(() => {
-    const map = new Map();
-    [...rawMaterials, ...packagingMaterials].forEach(item => {
-      map.set(item.id, calculateUnitCost(item));
-    });
-    return map;
-  }, [rawMaterials, packagingMaterials]);
+            // c. 電費成本
+            totalCost += parseFloat(recipe.electricityCost) || 0;
 
-  // 計算食譜的總成本和建議售價
-  const calculateRecipeCosts = (recipe) => {
-    let totalCost = 0;
+            // 總成本 / 產出數量 (得到每份成本)
+            const costPerUnit = (totalCost / (recipe.outputQty || 1));
 
-    // a. 食材成本
-    (recipe.ingredientDetails || []).forEach(detail => {
-      const unitCost = costMap.get(detail.materialId) || 0;
-      totalCost += unitCost * detail.qty;
-    });
+            // 建議售價 = 每份成本 / (1 - 毛利率%)
+            const grossMargin = (parseFloat(recipe.grossMargin) || 0) / 100;
+            
+            let sellingPrice = 0;
+            if (grossMargin < 1) {
+                sellingPrice = costPerUnit / (1 - grossMargin);
+            } else {
+                // 如果毛利率 >= 100% (不合理，或意指成本為 0)
+                sellingPrice = costPerUnit; 
+            }
 
-    // b. 包材成本
-    (recipe.packagingDetails || []).forEach(detail => {
-      const unitCost = costMap.get(detail.materialId) || 0;
-      totalCost += unitCost * detail.qty;
-    });
+            return {
+              totalCost: parseFloat(totalCost.toFixed(2)),
+              costPerUnit: parseFloat(costPerUnit.toFixed(2)),
+              sellingPrice: parseFloat(sellingPrice.toFixed(2)),
+            };
+          };
 
-    // c. 電費成本
-    totalCost += parseFloat(recipe.electricityCost) || 0;
+          // 輔助函式: 查找物料名稱
+          const getMaterialName = (id) => {
+            const item = [...rawMaterials, ...packagingMaterials].find(m => m.id === id);
+            return item ? item.name : '未知物料';
+          };
 
-    // 總成本 / 產出數量 (得到每份成本)
-    const costPerUnit = (totalCost / (recipe.outputQty || 1));
+          // --- UI 元件: 模態框 (取代 alert/confirm) ---
 
-    // 建議售價 = 每份成本 / (1 - 毛利率%)
-    const grossMargin = (parseFloat(recipe.grossMargin) || 0) / 100;
-    
-    let sellingPrice = 0;
-    if (grossMargin < 1) {
-        sellingPrice = costPerUnit / (1 - grossMargin);
-    } else {
-        // 如果毛利率 >= 100% (不合理，或意指成本為 0)
-        sellingPrice = costPerUnit; 
-    }
-
-    return {
-      totalCost: parseFloat(totalCost.toFixed(2)),
-      costPerUnit: parseFloat(costPerUnit.toFixed(2)),
-      sellingPrice: parseFloat(sellingPrice.toFixed(2)),
-    };
-  };
-
-  // 輔助函式: 查找物料名稱
-  const getMaterialName = (id) => {
-    const item = [...rawMaterials, ...packagingMaterials].find(m => m.id === id);
-    return item ? item.name : '未知物料';
-  };
-
-  // --- UI 元件: 模態框 (取代 alert/confirm) ---
-
-  const Modal = () => {
-    if (!modal.visible) return null;
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-75 p-4" role="dialog" aria-modal="true">
-        <div className={`${baseStyle.card} w-full max-w-sm rounded-lg p-6 shadow-2xl`}>
-          <h3 className="text-lg font-bold text-amber-300 mb-4">{modal.title}</h3>
-          <p className="text-sm text-gray-300 mb-6">{modal.message}</p>
-          <div className="flex justify-end space-x-3">
-            <button
-              onClick={() => setModal({ visible: false })}
-              className={`${baseStyle.buttonSecondary} px-4 py-2 text-sm rounded-full transition duration-150`}
-            >
-              取消
-            </button>
-            <button
-              onClick={() => {
-                if (modal.onConfirm) modal.onConfirm();
-                setModal({ visible: false });
-              }}
-              className={`${baseStyle.buttonPrimary} px-4 py-2 text-sm rounded-full transition duration-150`}
-            >
-              確認
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // --- UI 元件: 原物料/包材表單 ---
-
-  const MaterialForm = ({ initialData, collectionName, costUnits, priceUnits, onClose }) => {
-    const isRawMaterial = collectionName === 'rawMaterials';
-    const [item, setItem] = useState({
-      name: '', 
-      supplier: '', 
-      unitPrice: initialData?.unitPrice || 0, // 修正: 確保初始值為數字 0 (或從數據庫讀取的值)
-      priceUnit: initialData?.priceUnit || priceUnits[0], 
-      specQty: initialData?.specQty || 0, // 修正: 確保初始值為數字 0
-      costUnit: initialData?.costUnit || costUnits[0], 
-      netYield: initialData?.netYield || 100, // 修正: 確保初始值為數字 100
-      isRawMaterial: isRawMaterial,
-    });
-    const [errors, setErrors] = useState({});
-
-    const handleChange = (e) => {
-      const { name, value } = e.target;
-      const isNumeric = ['unitPrice', 'specQty', 'netYield'].includes(name);
-      setItem(prev => ({
-        ...prev,
-        // 如果是數字欄位，儲存空字串以允許清空輸入框，否則儲存數字
-        [name]: isNumeric ? (value === '' ? '' : parseFloat(value)) : value,
-      }));
-    };
-
-    const validate = () => {
-      const newErrors = {};
-      // 注意: 這裡的 item.unitPrice / item.specQty / item.netYield 可能會是 '' (空字串) 或數字
-      // 為了驗證，我們需要轉成數字
-      const unitPrice = parseFloat(item.unitPrice);
-      const specQty = parseFloat(item.specQty);
-      const netYield = parseFloat(item.netYield);
-
-      if (!item.name) newErrors.name = '必須填寫名稱';
-      if (isNaN(unitPrice) || unitPrice <= 0) newErrors.unitPrice = '必須是有效單價';
-      if (isNaN(specQty) || specQty <= 0) newErrors.specQty = '必須是有效規格量';
-      if (isNaN(netYield) || netYield < 0 || netYield > 100) newErrors.netYield = '淨料率必須在 0-100% 之間';
-      setErrors(newErrors);
-      return Object.keys(newErrors).length === 0;
-    };
-
-    const handleSubmit = async (e) => {
-      e.preventDefault();
-      if (!validate()) return;
-
-      const success = await saveItem(
-        collectionName,
-        { 
-            ...item, 
-            unitPrice: parseFloat(item.unitPrice), 
-            specQty: parseFloat(item.specQty), 
-            netYield: parseFloat(item.netYield) 
-        },
-        !initialData
-      );
-
-      if (success) {
-        onClose();
-      } else {
-        setModal({ visible: true, title: '錯誤', message: '資料儲存失敗，請檢查網路連線或權限。', onConfirm: null });
-      }
-    };
-    
-    // 渲染時使用空字串 fallback，以避免 type="number" 的警告
-    const unitPriceValue = item.unitPrice === 0 ? (initialData ? 0 : '') : item.unitPrice || '';
-    const specQtyValue = item.specQty === 0 ? (initialData ? 0 : '') : item.specQty || '';
-    const netYieldValue = item.netYield === 0 ? (initialData ? 0 : '') : item.netYield || '';
-
-    return (
-      <div className={`${baseStyle.card} p-4 rounded-xl space-y-3 mb-4`}>
-        <h2 className="text-lg font-bold text-amber-300">
-          {initialData ? '修改項目' : '新增項目'}
-        </h2>
-        <form onSubmit={handleSubmit} className="space-y-3 text-sm">
-          {/* 原物料名稱 */}
-          <input
-            name="name"
-            value={item.name}
-            onChange={handleChange}
-            placeholder={isRawMaterial ? "原物料名稱 (必填)" : "包材名稱 (必填)"}
-            className={`w-full p-2 rounded-lg ${baseStyle.input}`}
-          />
-          {errors.name && <p className="text-red-400 text-xs mt-1">{errors.name}</p>}
-
-          {/* 供應商 (選填) */}
-          <input
-            name="supplier"
-            value={item.supplier}
-            onChange={handleChange}
-            placeholder="供應商 (選填)"
-            className={`w-full p-2 rounded-lg ${baseStyle.input}`}
-          />
-
-          <div className="flex space-x-2">
-            {/* 採購單價 ($) */}
-            <div className="w-1/2">
-              <input
-                name="unitPrice"
-                type="number"
-                step="0.01"
-                value={item.unitPrice || ''} // 使用 item.unitPrice || ''
-                onChange={handleChange}
-                placeholder="單價 ($)"
-                className={`w-full p-2 rounded-lg ${baseStyle.input}`}
-              />
-              {errors.unitPrice && <p className="text-red-400 text-xs mt-1">{errors.unitPrice}</p>}
-            </div>
-
-            {/* 採購價格單位 */}
-            <select
-              name="priceUnit"
-              value={item.priceUnit}
-              onChange={handleChange}
-              className={`w-1/2 p-2 rounded-lg ${baseStyle.input}`}
-            >
-              {priceUnits.map(unit => (
-                <option key={unit} value={unit}>{unit}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex space-x-2">
-            {/* 採購規格量 */}
-            <div className="w-1/2">
-              <input
-                name="specQty"
-                type="number"
-                step="0.001"
-                value={item.specQty || ''} // 使用 item.specQty || ''
-                onChange={handleChange}
-                placeholder={isRawMaterial ? "淨重/數量" : "數量"}
-                className={`w-full p-2 rounded-lg ${baseStyle.input}`}
-              />
-              {errors.specQty && <p className="text-red-400 text-xs mt-1">{errors.specQty}</p>}
-            </div>
-
-            {/* 成本核算單位 */}
-            <select
-              name="costUnit"
-              value={item.costUnit}
-              onChange={handleChange}
-              className={`w-1/2 p-2 rounded-lg ${baseStyle.input}`}
-            >
-              {costUnits.map(unit => (
-                <option key={unit} value={unit}>{unit}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* 淨料率 (%) */}
-          <input
-            name="netYield"
-            type="number"
-            value={item.netYield || ''} // 使用 item.netYield || ''
-            onChange={handleChange}
-            placeholder="淨料率 (%) (預設 100)"
-            min="0"
-            max="100"
-            className={`w-full p-2 rounded-lg ${baseStyle.input}`}
-          />
-          {errors.netYield && <p className="text-red-400 text-xs mt-1">{errors.netYield}</p>}
-
-          <div className="flex justify-end space-x-2 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className={`${baseStyle.buttonSecondary} px-4 py-2 text-xs rounded-full`}
-            >
-              取消
-            </button>
-            <button
-              type="submit"
-              className={`${baseStyle.buttonPrimary} px-4 py-2 text-xs rounded-full`}
-            >
-              儲存
-            </button>
-          </div>
-        </form>
-      </div>
-    );
-  };
-
-  // --- UI 元件: 列表頁 (原料/包材) ---
-
-  const MaterialListPage = ({ title, data, collectionName, costUnits, priceUnits }) => {
-    const [search, setSearch] = useState('');
-    const [sortOrder, setSortOrder] = useState('asc'); // 'asc' or 'desc'
-    const [editItem, setEditItem] = useState(null);
-    const [showForm, setShowForm] = useState(false);
-
-    const filteredAndSortedData = useMemo(() => {
-      let filtered = data.filter(item =>
-        item.name.toLowerCase().includes(search.toLowerCase())
-      );
-
-      // 名稱排序 (A 到 Z)
-      if (collectionName === 'rawMaterials') {
-        filtered.sort((a, b) => {
-          if (a.name < b.name) return sortOrder === 'asc' ? -1 : 1;
-          if (a.name > b.name) return sortOrder === 'asc' ? 1 : -1;
-          return 0;
-        });
-      }
-
-      return filtered;
-    }, [data, search, sortOrder, collectionName]);
-
-    return (
-      <div className="p-4 space-y-4">
-        <h1 className="text-xl font-extrabold text-amber-300 border-b border-amber-800 pb-2">{title}</h1>
-
-        {/* 搜尋欄 */}
-        <input
-          type="text"
-          placeholder="搜尋名稱..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className={`w-full p-2 rounded-lg ${baseStyle.input} text-sm`}
-        />
-
-        {/* 新增/匯出/排序按鈕 */}
-        <div className="flex justify-between items-center text-xs">
-          <button
-            onClick={() => { setShowForm(true); setEditItem(null); }}
-            className={`${baseStyle.buttonPrimary} px-3 py-1.5 rounded-full`}
-          >
-            + 新增
-          </button>
-          <div className="flex space-x-2">
-            {collectionName === 'rawMaterials' && (
-              <button
-                onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
-                className={`${baseStyle.buttonSecondary} px-3 py-1.5 rounded-full`}
-              >
-                名稱排序 ({sortOrder === 'asc' ? 'A→Z' : 'Z→A'})
-              </button>
-            )}
-            <button
-              onClick={() => exportToExcel(filteredAndSortedData.map(item => ({
-                ...item,
-                costPerUnit: calculateUnitCost(item).toFixed(4) // 添加計算後的單價
-              })), title)}
-              className={`${baseStyle.buttonSecondary} px-3 py-1.5 rounded-full`}
-            >
-              匯出 CSV
-            </button>
-          </div>
-        </div>
-
-        {(showForm || editItem) && (
-          <MaterialForm
-            initialData={editItem}
-            collectionName={collectionName}
-            costUnits={costUnits}
-            priceUnits={priceUnits}
-            onClose={() => { setShowForm(false); setEditItem(null); }}
-          />
-        )}
-
-        {/* 清單 */}
-        <div className="space-y-2">
-          {filteredAndSortedData.map((item) => {
-            const costPerUnit = calculateUnitCost(item);
+          const Modal = () => {
+            if (!modal.visible) return null;
             return (
-              <div key={item.id} className={`${baseStyle.card} p-3 rounded-lg shadow-md text-xs`}>
-                <div className="flex justify-between items-start">
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-amber-300 truncate">{item.name}</p>
-                    <p className="text-gray-400 text-2xs">供應商: {item.supplier || 'N/A'}</p>
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-75 p-4" role="dialog" aria-modal="true">
+                <div className={`${baseStyle.card} w-full max-w-sm rounded-lg p-6 shadow-2xl`}>
+                  <h3 className="text-lg font-bold text-amber-300 mb-4">{modal.title}</h3>
+                  <p className="text-sm text-gray-300 mb-6">{modal.message}</p>
+                  <div className="flex justify-end space-x-3">
+                    <button
+                      onClick={() => setModal({ visible: false })}
+                      className={`${baseStyle.buttonSecondary} px-4 py-2 text-sm rounded-full transition duration-150`}
+                    >
+                      取消
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (modal.onConfirm) modal.onConfirm();
+                        setModal({ visible: false });
+                      }}
+                      className={`${baseStyle.buttonPrimary} px-4 py-2 text-sm rounded-full transition duration-150`}
+                    >
+                      確認
+                    </button>
                   </div>
-                  <div className="ml-4 text-right">
-                    <p className="font-bold text-lg text-amber-500">${costPerUnit.toFixed(4)}</p>
-                    <p className="text-gray-500 text-3xs">/ {item.costUnit}</p>
-                  </div>
-                </div>
-
-                <div className="flex justify-between text-gray-400 mt-1 text-3xs border-t border-amber-900/50 pt-1">
-                  <p>單價: ${item.unitPrice} / {item.priceUnit}</p>
-                  <p>規格: {item.specQty} {item.costUnit}</p>
-                  <p>淨料率: {item.netYield}%</p>
-                </div>
-
-                <div className="flex justify-end space-x-2 mt-2">
-                  <button
-                    onClick={() => setEditItem(item)}
-                    className={`${baseStyle.buttonSecondary} px-3 py-1 text-3xs rounded-full`}
-                  >
-                    修改
-                  </button>
-                  <button
-                    onClick={() => deleteItem(collectionName, item.id)}
-                    className="bg-red-700 hover:bg-red-800 text-white px-3 py-1 text-3xs rounded-full"
-                  >
-                    刪除
-                  </button>
                 </div>
               </div>
             );
-          })}
-          {filteredAndSortedData.length === 0 && (
-            <p className="text-center text-gray-500 pt-4 text-sm">找不到資料或清單為空。</p>
-          )}
-        </div>
-      </div>
-    );
-  };
+          };
 
-  // --- UI 元件: 食譜定價表單 ---
+          // --- UI 元件: 原物料/包材表單 ---
 
-  const RecipeForm = ({ initialData, onClose }) => {
-    const [recipe, setRecipe] = useState({
-      name: initialData?.name || '',
-      category: initialData?.category || RECIPE_CATEGORIES[0], 
-      outputQty: initialData?.outputQty || 1, // 修正: 確保初始值為數字 1
-      outputUnit: initialData?.outputUnit || RECIPE_OUTPUT_UNITS[0], 
-      grossMargin: initialData?.grossMargin || 30, // 修正: 確保初始值為數字 30
-      electricityCost: initialData?.electricityCost || 0, // 修正: 確保初始值為數字 0
-      ingredientDetails: initialData?.ingredientDetails || [], 
-      packagingDetails: initialData?.packagingDetails || [],
-    });
-    const [errors, setErrors] = useState({});
-    const [newIngredient, setNewIngredient] = useState({ materialId: '', qty: 0 }); // 修正: 預設 qty 為 0
-    const [newPackaging, setNewPackaging] = useState({ materialId: '', qty: 0 }); // 修正: 預設 qty 為 0
+          const MaterialForm = ({ initialData, collectionName, costUnits, priceUnits, onClose }) => {
+            const isRawMaterial = collectionName === 'rawMaterials';
+            const [item, setItem] = useState({
+              name: '', 
+              supplier: '', 
+              unitPrice: initialData?.unitPrice || 0, // 修正: 確保初始值為數字 0 (或從數據庫讀取的值)
+              priceUnit: initialData?.priceUnit || priceUnits[0], 
+              specQty: initialData?.specQty || 0, // 修正: 確保初始值為數字 0
+              costUnit: initialData?.costUnit || costUnits[0], 
+              netYield: initialData?.netYield || 100, // 修正: 確保初始值為數字 100
+              isRawMaterial: isRawMaterial,
+            });
+            const [errors, setErrors] = useState({});
 
-    const allMaterials = useMemo(() => [...rawMaterials, ...packagingMaterials], [rawMaterials, packagingMaterials]);
+            const handleChange = (e) => {
+              const { name, value } = e.target;
+              const isNumeric = ['unitPrice', 'specQty', 'netYield'].includes(name);
+              setItem(prev => ({
+                ...prev,
+                // 如果是數字欄位，儲存空字串以允許清空輸入框，否則儲存數字
+                [name]: isNumeric ? (value === '' ? '' : parseFloat(value)) : value,
+              }));
+            };
 
-    const handleChange = (e) => {
-      const { name, value } = e.target;
-      const isNumeric = ['outputQty', 'grossMargin', 'electricityCost'].includes(name);
-      setRecipe(prev => ({
-        ...prev,
-        // 如果是數字欄位，儲存空字串以允許清空輸入框，否則儲存數字
-        [name]: isNumeric ? (value === '' ? '' : parseFloat(value)) : value,
-      }));
-    };
+            const validate = () => {
+              const newErrors = {};
+              // 注意: 這裡的 item.unitPrice / item.specQty / item.netYield 可能會是 '' (空字串) 或數字
+              // 為了驗證，我們需要轉成數字
+              const unitPrice = parseFloat(item.unitPrice);
+              const specQty = parseFloat(item.specQty);
+              const netYield = parseFloat(item.netYield);
 
-    const handleAddDetail = (type) => {
-      const detail = type === 'ingredient' ? newIngredient : newPackaging;
-      const setter = type === 'ingredient' ? setNewIngredient : setNewPackaging;
-      
-      const qty = parseFloat(detail.qty);
+              if (!item.name) newErrors.name = '必須填寫名稱';
+              if (isNaN(unitPrice) || unitPrice <= 0) newErrors.unitPrice = '必須是有效單價';
+              if (isNaN(specQty) || specQty <= 0) newErrors.specQty = '必須是有效規格量';
+              if (isNaN(netYield) || netYield < 0 || netYield > 100) newErrors.netYield = '淨料率必須在 0-100% 之間';
+              setErrors(newErrors);
+              return Object.keys(newErrors).length === 0;
+            };
 
-      if (detail.materialId && !isNaN(qty) && qty > 0) {
-        setRecipe(prev => ({
-          ...prev,
-          [type === 'ingredient' ? 'ingredientDetails' : 'packagingDetails']: [
-            ...prev[type === 'ingredient' ? 'ingredientDetails' : 'packagingDetails'], 
-            { ...detail, qty: qty }
-          ]
-        }));
-        setter({ materialId: '', qty: 0 }); // 重設為 0
-      }
-    };
+            const handleSubmit = async (e) => {
+              e.preventDefault();
+              if (!validate()) return;
 
-    const handleDeleteDetail = (type, index) => {
-      setRecipe(prev => ({
-        ...prev,
-        [type]: prev[type].filter((_, i) => i !== index)
-      }));
-    };
+              const success = await saveItem(
+                collectionName,
+                { 
+                    ...item, 
+                    unitPrice: parseFloat(item.unitPrice), 
+                    specQty: parseFloat(item.specQty), 
+                    netYield: parseFloat(item.netYield) 
+                },
+                !initialData
+              );
 
-    const validate = () => {
-      const newErrors = {};
-      const outputQty = parseFloat(recipe.outputQty);
+              if (success) {
+                onClose();
+              } else {
+                setModal({ visible: true, title: '錯誤', message: '資料儲存失敗，請檢查網路連線或權限。', onConfirm: null });
+              }
+            };
+            
+            // 渲染時使用空字串 fallback，以避免 type="number" 的警告
+            const unitPriceValue = item.unitPrice === 0 ? (initialData ? 0 : '') : item.unitPrice || '';
+            const specQtyValue = item.specQty === 0 ? (initialData ? 0 : '') : item.specQty || '';
+            const netYieldValue = item.netYield === 0 ? (initialData ? 0 : '') : item.netYield || '';
 
-      if (!recipe.name) newErrors.name = '必須填寫食品名稱';
-      if (isNaN(outputQty) || outputQty <= 0) newErrors.outputQty = '必須是有效產出數量';
-      setErrors(newErrors);
-      return Object.keys(newErrors).length === 0;
-    };
-
-    const handleSubmit = async (e) => {
-      e.preventDefault();
-      if (!validate()) return;
-
-      const success = await saveItem(
-        'recipes',
-        { 
-            ...recipe, 
-            outputQty: parseFloat(recipe.outputQty), 
-            grossMargin: parseFloat(recipe.grossMargin), 
-            electricityCost: parseFloat(recipe.electricityCost) 
-        },
-        !initialData
-      );
-
-      if (success) {
-        onClose();
-      } else {
-        setModal({ visible: true, title: '錯誤', message: '食譜儲存失敗。', onConfirm: null });
-      }
-    };
-
-    return (
-      <div className={`${baseStyle.card} p-4 rounded-xl space-y-3 mb-4`}>
-        <h2 className="text-lg font-bold text-amber-300">{initialData ? '修改食譜' : '新增食譜'}</h2>
-        <form onSubmit={handleSubmit} className="space-y-3 text-sm">
-          {/* 食品名稱 & 分類 */}
-          <div className="flex space-x-2">
-            <input
-              name="name"
-              value={recipe.name}
-              onChange={handleChange}
-              placeholder="食品名稱 (必填)"
-              className={`w-2/3 p-2 rounded-lg ${baseStyle.input}`}
-            />
-            <select
-              name="category"
-              value={recipe.category}
-              onChange={handleChange}
-              className={`w-1/3 p-2 rounded-lg ${baseStyle.input}`}
-            >
-              {RECIPE_CATEGORIES.map(cat => (
-                <option key={cat} value={cat}>{cat}</option>
-              ))}
-            </select>
-          </div>
-          {errors.name && <p className="text-red-400 text-xs mt-1">{errors.name}</p>}
-
-          {/* 產出數量 & 產量單位 */}
-          <div className="flex space-x-2">
-            <div className="w-1/2">
-              <input
-                name="outputQty"
-                type="number"
-                value={recipe.outputQty || ''} // 使用 recipe.outputQty || ''
-                onChange={handleChange}
-                placeholder="產出數量"
-                className={`w-full p-2 rounded-lg ${baseStyle.input}`}
-              />
-              {errors.outputQty && <p className="text-red-400 text-xs mt-1">{errors.outputQty}</p>}
-            </div>
-            <select
-              name="outputUnit"
-              value={recipe.outputUnit}
-              onChange={handleChange}
-              className={`w-1/2 p-2 rounded-lg ${baseStyle.input}`}
-            >
-              {RECIPE_OUTPUT_UNITS.map(unit => (
-                <option key={unit} value={unit}>{unit}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* 毛利率 & 電費成本 */}
-          <div className="flex space-x-2">
-            <input
-              name="grossMargin"
-              type="number"
-              value={recipe.grossMargin || ''} // 使用 recipe.grossMargin || ''
-              onChange={handleChange}
-              placeholder="毛利率 (%)"
-              min="0"
-              max="100"
-              className={`w-1/2 p-2 rounded-lg ${baseStyle.input}`}
-            />
-            <input
-              name="electricityCost"
-              type="number"
-              step="0.01"
-              value={recipe.electricityCost || ''} // 使用 recipe.electricityCost || ''
-              onChange={handleChange}
-              placeholder="電費成本 ($)"
-              min="0"
-              className={`w-1/2 p-2 rounded-lg ${baseStyle.input}`}
-            />
-          </div>
-
-          {/* 食材配方明細 */}
-          <DetailSection
-            title="食材配方 (原料清單)"
-            details={recipe.ingredientDetails}
-            type="ingredientDetails"
-            allMaterials={rawMaterials}
-            newDetail={newIngredient}
-            setNewDetail={setNewIngredient}
-            handleAdd={handleAddDetail}
-            handleDelete={handleDeleteDetail}
-            getMaterialName={getMaterialName}
-          />
-
-          {/* 包材明細 */}
-          <DetailSection
-            title="包材明細 (包材清單)"
-            details={recipe.packagingDetails}
-            type="packagingDetails"
-            allMaterials={packagingMaterials}
-            newDetail={newPackaging}
-            setNewDetail={setNewPackaging}
-            handleAdd={handleAddDetail}
-            handleDelete={handleDeleteDetail}
-            getMaterialName={getMaterialName}
-          />
-
-          <div className="flex justify-end space-x-2 pt-2">
-            <button type="button" onClick={onClose} className={`${baseStyle.buttonSecondary} px-4 py-2 text-xs rounded-full`}>取消</button>
-            <button type="submit" className={`${baseStyle.buttonPrimary} px-4 py-2 text-xs rounded-full`}>儲存食譜</button>
-          </div>
-        </form>
-      </div>
-    );
-  };
-
-  const DetailSection = ({ title, details, type, allMaterials, newDetail, setNewDetail, handleAdd, handleDelete, getMaterialName }) => {
-    return (
-      <div className="border border-amber-900/50 p-3 rounded-lg space-y-2">
-        <h3 className="text-amber-400 font-semibold text-xs">{title}</h3>
-        {/* 新增明細 */}
-        <div className="flex space-x-2">
-          <select
-            value={newDetail.materialId}
-            onChange={(e) => setNewDetail(prev => ({ ...prev, materialId: e.target.value }))}
-            className={`w-1/2 p-2 text-xs rounded-lg ${baseStyle.input}`}
-          >
-            <option value="">選擇物料...</option>
-            {allMaterials.map(m => (
-              <option key={m.id} value={m.id}>{m.name}</option>
-            ))}
-          </select>
-          <input
-            type="number"
-            min="0"
-            step="0.01"
-            value={newDetail.qty || ''} // 使用 newDetail.qty || ''
-            onChange={(e) => setNewDetail(prev => ({ ...prev, qty: e.target.value }))}
-            placeholder="用量"
-            className={`w-1/4 p-2 text-xs rounded-lg ${baseStyle.input}`}
-          />
-          <button
-            type="button"
-            onClick={() => handleAdd(type === 'ingredientDetails' ? 'ingredient' : 'packaging')}
-            className={`${baseStyle.buttonSecondary} w-1/4 p-2 text-3xs rounded-full`}
-            disabled={!newDetail.materialId}
-          >
-            加入
-          </button>
-        </div>
-
-        {/* 明細清單 */}
-        <div className="space-y-1 max-h-32 overflow-y-auto">
-          {details.map((detail, index) => {
-            const material = allMaterials.find(m => m.id === detail.materialId);
-            const unit = material ? material.costUnit : '?';
             return (
-              <div key={index} className="flex justify-between items-center bg-gray-700/50 p-1.5 rounded-md text-xs">
-                <span className="text-gray-200">{getMaterialName(detail.materialId)}</span>
-                <span className="text-amber-300">{detail.qty} {unit}</span>
-                <button
-                  type="button"
-                  onClick={() => handleDelete(type, index)}
-                  className="text-red-400 hover:text-red-300 text-xs"
-                >
-                  (X)
-                </button>
+              <div className={`${baseStyle.card} p-4 rounded-xl space-y-3 mb-4`}>
+                <h2 className="text-lg font-bold text-amber-300">
+                  {initialData ? '修改項目' : '新增項目'}
+                </h2>
+                <form onSubmit={handleSubmit} className="space-y-3 text-sm">
+                  {/* 原物料名稱 */}
+                  <input
+                    name="name"
+                    value={item.name}
+                    onChange={handleChange}
+                    placeholder={isRawMaterial ? "原物料名稱 (必填)" : "包材名稱 (必填)"}
+                    className={`w-full p-2 rounded-lg ${baseStyle.input}`}
+                  />
+                  {errors.name && <p className="text-red-400 text-xs mt-1">{errors.name}</p>}
+
+                  {/* 供應商 (選填) */}
+                  <input
+                    name="supplier"
+                    value={item.supplier}
+                    onChange={handleChange}
+                    placeholder="供應商 (選填)"
+                    className={`w-full p-2 rounded-lg ${baseStyle.input}`}
+                  />
+
+                  <div className="flex space-x-2">
+                    {/* 採購單價 ($) */}
+                    <div className="w-1/2">
+                      <input
+                        name="unitPrice"
+                        type="number"
+                        step="0.01"
+                        value={item.unitPrice || ''} // 使用 item.unitPrice || ''
+                        onChange={handleChange}
+                        placeholder="單價 ($)"
+                        className={`w-full p-2 rounded-lg ${baseStyle.input}`}
+                      />
+                      {errors.unitPrice && <p className="text-red-400 text-xs mt-1">{errors.unitPrice}</p>}
+                    </div>
+
+                    {/* 採購價格單位 */}
+                    <select
+                      name="priceUnit"
+                      value={item.priceUnit}
+                      onChange={handleChange}
+                      className={`w-1/2 p-2 rounded-lg ${baseStyle.input}`}
+                    >
+                      {priceUnits.map(unit => (
+                        <option key={unit} value={unit}>{unit}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="flex space-x-2">
+                    {/* 採購規格量 */}
+                    <div className="w-1/2">
+                      <input
+                        name="specQty"
+                        type="number"
+                        step="0.001"
+                        value={item.specQty || ''} // 使用 item.specQty || ''
+                        onChange={handleChange}
+                        placeholder={isRawMaterial ? "淨重/數量" : "數量"}
+                        className={`w-full p-2 rounded-lg ${baseStyle.input}`}
+                      />
+                      {errors.specQty && <p className="text-red-400 text-xs mt-1">{errors.specQty}</p>}
+                    </div>
+
+                    {/* 成本核算單位 */}
+                    <select
+                      name="costUnit"
+                      value={item.costUnit}
+                      onChange={handleChange}
+                      className={`w-1/2 p-2 rounded-lg ${baseStyle.input}`}
+                    >
+                      {costUnits.map(unit => (
+                        <option key={unit} value={unit}>{unit}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* 淨料率 (%) */}
+                  <input
+                    name="netYield"
+                    type="number"
+                    value={item.netYield || ''} // 使用 item.netYield || ''
+                    onChange={handleChange}
+                    placeholder="淨料率 (%) (預設 100)"
+                    min="0"
+                    max="100"
+                    className={`w-full p-2 rounded-lg ${baseStyle.input}`}
+                  />
+                  {errors.netYield && <p className="text-red-400 text-xs mt-1">{errors.netYield}</p>}
+
+                  <div className="flex justify-end space-x-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={onClose}
+                      className={`${baseStyle.buttonSecondary} px-4 py-2 text-xs rounded-full`}
+                    >
+                      取消
+                    </button>
+                    <button
+                      type="submit"
+                      className={`${baseStyle.buttonPrimary} px-4 py-2 text-xs rounded-full`}
+                    >
+                      儲存
+                    </button>
+                  </div>
+                </form>
               </div>
             );
-          })}
-        </div>
-      </div>
-    );
-  };
+          };
 
+          // --- UI 元件: 列表頁 (原料/包材) ---
 
-  // --- UI 元件: 食譜定價清單 ---
+          const MaterialListPage = ({ title, data, collectionName, costUnits, priceUnits }) => {
+            const [search, setSearch] = useState('');
+            const [sortOrder, setSortOrder] = useState('asc'); // 'asc' or 'desc'
+            const [editItem, setEditItem] = useState(null);
+            const [showForm, setShowForm] = useState(false);
 
-  const RecipePricingPage = () => {
-    const [search, setSearch] = useState('');
-    const [editRecipe, setEditRecipe] = useState(null);
-    const [showForm, setShowForm] = useState(false);
-    const [detailRecipe, setDetailRecipe] = useState(null);
+            const filteredAndSortedData = useMemo(() => {
+              let filtered = data.filter(item =>
+                item.name.toLowerCase().includes(search.toLowerCase())
+              );
 
-    const filteredRecipes = useMemo(() => {
-      return recipes.filter(r =>
-        r.name.toLowerCase().includes(search.toLowerCase()) || r.category.includes(search)
-      );
-    }, [recipes, search]);
+              // 名稱排序 (A 到 Z)
+              if (collectionName === 'rawMaterials') {
+                filtered.sort((a, b) => {
+                  if (a.name < b.name) return sortOrder === 'asc' ? -1 : 1;
+                  if (a.name > b.name) return sortOrder === 'asc' ? 1 : -1;
+                  return 0;
+                });
+              }
 
-    return (
-      <div className="p-4 space-y-4">
-        <h1 className="text-xl font-extrabold text-amber-300 border-b border-amber-800 pb-2">食譜定價管理</h1>
+              return filtered;
+            }, [data, search, sortOrder, collectionName]);
 
-        {/* 搜尋欄 */}
-        <input
-          type="text"
-          placeholder="搜尋食品名稱或分類..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className={`w-full p-2 rounded-lg ${baseStyle.input} text-sm`}
-        />
-
-        {/* 新增/匯出按鈕 */}
-        <div className="flex justify-between items-center text-xs">
-          <button
-            onClick={() => { setShowForm(true); setEditRecipe(null); setDetailRecipe(null); }}
-            className={`${baseStyle.buttonPrimary} px-3 py-1.5 rounded-full`}
-          >
-            + 新增食譜
-          </button>
-          <button
-            onClick={() => exportToExcel(filteredRecipes.map(r => ({ ...r, ...calculateRecipeCosts(r) })), '食譜定價清單')}
-            className={`${baseStyle.buttonSecondary} px-3 py-1.5 rounded-full`}
-          >
-            匯出 CSV
-          </button>
-        </div>
-
-        {(showForm || editRecipe) && (
-          <RecipeForm
-            initialData={editRecipe}
-            onClose={() => { setShowForm(false); setEditRecipe(null); }}
-          />
-        )}
-
-        {/* 食譜清單 */}
-        <div className="space-y-2">
-          {filteredRecipes.map((recipe) => {
-            const { costPerUnit, sellingPrice } = calculateRecipeCosts(recipe);
             return (
-              <div key={recipe.id} className={`${baseStyle.card} p-3 rounded-lg shadow-md text-xs`}>
-                <div className="flex justify-between items-start">
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-amber-300 truncate">{recipe.name}</p>
-                    <p className="text-gray-400 text-2xs">{recipe.category} ({recipe.outputQty} {recipe.outputUnit})</p>
+              <div className="p-4 space-y-4">
+                <h1 className="text-xl font-extrabold text-amber-300 border-b border-amber-800 pb-2">{title}</h1>
+
+                {/* 搜尋欄 */}
+                <input
+                  type="text"
+                  placeholder="搜尋名稱..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className={`w-full p-2 rounded-lg ${baseStyle.input} text-sm`}
+                />
+
+                {/* 新增/匯出/排序按鈕 */}
+                <div className="flex justify-between items-center text-xs">
+                  <button
+                    onClick={() => { setShowForm(true); setEditItem(null); }}
+                    className={`${baseStyle.buttonPrimary} px-3 py-1.5 rounded-full`}
+                  >
+                    + 新增
+                  </button>
+                  <div className="flex space-x-2">
+                    {collectionName === 'rawMaterials' && (
+                      <button
+                        onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+                        className={`${baseStyle.buttonSecondary} px-3 py-1.5 rounded-full`}
+                      >
+                        名稱排序 ({sortOrder === 'asc' ? 'A→Z' : 'Z→A'})
+                      </button>
+                    )}
+                    <button
+                      onClick={() => exportToExcel(filteredAndSortedData.map(item => ({
+                        ...item,
+                        costPerUnit: calculateUnitCost(item).toFixed(4) // 添加計算後的單價
+                      })), title)}
+                      className={`${baseStyle.buttonSecondary} px-3 py-1.5 rounded-full`}
+                    >
+                      匯出 CSV
+                    </button>
                   </div>
-                  <div className="ml-4 text-right">
-                    <p className="font-bold text-lg text-amber-500">${sellingPrice.toFixed(2)}</p>
-                    <p className="text-gray-500 text-3xs">建議售價</p>
-                  </div>
                 </div>
 
-                <div className="flex justify-between text-gray-400 mt-1 text-3xs border-t border-amber-900/50 pt-1">
-                  <p>毛利率: {recipe.grossMargin}%</p>
-                  <p>單份成本: ${costPerUnit.toFixed(2)}</p>
-                </div>
-
-                <div className="flex justify-end space-x-2 mt-2">
-                  <button
-                    onClick={() => setDetailRecipe(detailRecipe && detailRecipe.id === recipe.id ? null : recipe)}
-                    className={`${baseStyle.buttonSecondary} px-3 py-1 text-3xs rounded-full`}
-                  >
-                    {detailRecipe && detailRecipe.id === recipe.id ? '隱藏明細' : '明細'}
-                  </button>
-                  <button
-                    onClick={() => setEditRecipe(recipe)}
-                    className={`${baseStyle.buttonSecondary} px-3 py-1 text-3xs rounded-full`}
-                  >
-                    修改
-                  </button>
-                  <button
-                    onClick={() => deleteItem('recipes', recipe.id)}
-                    className="bg-red-700 hover:bg-red-800 text-white px-3 py-1 text-3xs rounded-full"
-                  >
-                    刪除
-                  </button>
-                </div>
-
-                {/* 明細展開區塊 */}
-                {detailRecipe && detailRecipe.id === recipe.id && (
-                  <RecipeDetailView recipe={recipe} costMap={costMap} getMaterialName={getMaterialName} rawMaterials={rawMaterials} packagingMaterials={packagingMaterials} />
+                {(showForm || editItem) && (
+                  <MaterialForm
+                    initialData={editItem}
+                    collectionName={collectionName}
+                    costUnits={costUnits}
+                    priceUnits={priceUnits}
+                    onClose={() => { setShowForm(false); setEditItem(null); }}
+                  />
                 )}
+
+                {/* 清單 */}
+                <div className="space-y-2">
+                  {filteredAndSortedData.map((item) => {
+                    const costPerUnit = calculateUnitCost(item);
+                    return (
+                      <div key={item.id} className={`${baseStyle.card} p-3 rounded-lg shadow-md text-xs`}>
+                        <div className="flex justify-between items-start">
+                          <div className="flex-1 min-w-0">
+                            <p className="font-semibold text-amber-300 truncate">{item.name}</p>
+                            <p className="text-gray-400 text-2xs">供應商: {item.supplier || 'N/A'}</p>
+                          </div>
+                          <div className="ml-4 text-right">
+                            <p className="font-bold text-lg text-amber-500">${costPerUnit.toFixed(4)}</p>
+                            <p className="text-gray-500 text-3xs">/ {item.costUnit}</p>
+                          </div>
+                        </div>
+
+                        <div className="flex justify-between text-gray-400 mt-1 text-3xs border-t border-amber-900/50 pt-1">
+                          <p>單價: ${item.unitPrice} / {item.priceUnit}</p>
+                          <p>規格: {item.specQty} {item.costUnit}</p>
+                          <p>淨料率: {item.netYield}%</p>
+                        </div>
+
+                        <div className="flex justify-end space-x-2 mt-2">
+                          <button
+                            onClick={() => setEditItem(item)}
+                            className={`${baseStyle.buttonSecondary} px-3 py-1 text-3xs rounded-full`}
+                          >
+                            修改
+                          </button>
+                          <button
+                            onClick={() => deleteItem(collectionName, item.id)}
+                            className="bg-red-700 hover:bg-red-800 text-white px-3 py-1 text-3xs rounded-full"
+                          >
+                            刪除
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {filteredAndSortedData.length === 0 && (
+                    <p className="text-center text-gray-500 pt-4 text-sm">找不到資料或清單為空。</p>
+                  )}
+                </div>
               </div>
             );
-          })}
-          {filteredRecipes.length === 0 && (
-            <p className="text-center text-gray-500 pt-4 text-sm">找不到食譜資料。</p>
-          )}
-        </div>
-      </div>
-    );
-  };
+          };
 
-  // --- UI 元件: 食譜明細視圖 (用於定價和總覽) ---
+          // --- UI 元件: 食譜定價表單 ---
 
-  const RecipeDetailView = ({ recipe, costMap, getMaterialName, isAnalysis = false }) => {
-    const { totalCost, costPerUnit, sellingPrice } = calculateRecipeCosts(recipe);
+          const RecipeForm = ({ initialData, onClose }) => {
+            const [recipe, setRecipe] = useState({
+              name: initialData?.name || '',
+              category: initialData?.category || RECIPE_CATEGORIES[0], 
+              outputQty: initialData?.outputQty || 1, // 修正: 確保初始值為數字 1
+              outputUnit: initialData?.outputUnit || RECIPE_OUTPUT_UNITS[0], 
+              grossMargin: initialData?.grossMargin || 30, // 修正: 確保初始值為數字 30
+              electricityCost: initialData?.electricityCost || 0, // 修正: 確保初始值為數字 0
+              ingredientDetails: initialData?.ingredientDetails || [], 
+              packagingDetails: initialData?.packagingDetails || [],
+            });
+            const [errors, setErrors] = useState({});
+            const [newIngredient, setNewIngredient] = useState({ materialId: '', qty: 0 }); // 修正: 預設 qty 為 0
+            const [newPackaging, setNewPackaging] = useState({ materialId: '', qty: 0 }); // 修正: 預設 qty 為 0
 
-    const renderDetails = (details, type) => {
-      return (
-        <div className="space-y-1">
-          <p className="font-bold text-amber-400 text-2xs mb-1">{type === 'ingredient' ? '食材成本明細' : '包材成本明細'}</p>
-          {(details || []).map((detail, index) => {
-            const material = [...rawMaterials, ...packagingMaterials].find(m => m.id === detail.materialId);
-            const unitCost = costMap.get(detail.materialId) || 0;
-            const itemCost = unitCost * detail.qty;
-            const costUnit = material?.costUnit || '?';
+            const allMaterials = useMemo(() => [...rawMaterials, ...packagingMaterials], [rawMaterials, packagingMaterials]);
+
+            const handleChange = (e) => {
+              const { name, value } = e.target;
+              const isNumeric = ['outputQty', 'grossMargin', 'electricityCost'].includes(name);
+              setRecipe(prev => ({
+                ...prev,
+                // 如果是數字欄位，儲存空字串以允許清空輸入框，否則儲存數字
+                [name]: isNumeric ? (value === '' ? '' : parseFloat(value)) : value,
+              }));
+            };
+
+            const handleAddDetail = (type) => {
+              const detail = type === 'ingredient' ? newIngredient : newPackaging;
+              const setter = type === 'ingredient' ? setNewIngredient : setNewPackaging;
+              
+              const qty = parseFloat(detail.qty);
+
+              if (detail.materialId && !isNaN(qty) && qty > 0) {
+                setRecipe(prev => ({
+                  ...prev,
+                  [type === 'ingredient' ? 'ingredientDetails' : 'packagingDetails']: [
+                    ...prev[type === 'ingredient' ? 'ingredientDetails' : 'packagingDetails'], 
+                    { ...detail, qty: qty }
+                  ]
+                }));
+                setter({ materialId: '', qty: 0 }); // 重設為 0
+              }
+            };
+
+            const handleDeleteDetail = (type, index) => {
+              setRecipe(prev => ({
+                ...prev,
+                [type]: prev[type].filter((_, i) => i !== index)
+              }));
+            };
+
+            const validate = () => {
+              const newErrors = {};
+              const outputQty = parseFloat(recipe.outputQty);
+
+              if (!recipe.name) newErrors.name = '必須填寫食品名稱';
+              if (isNaN(outputQty) || outputQty <= 0) newErrors.outputQty = '必須是有效產出數量';
+              setErrors(newErrors);
+              return Object.keys(newErrors).length === 0;
+            };
+
+            const handleSubmit = async (e) => {
+              e.preventDefault();
+              if (!validate()) return;
+
+              const success = await saveItem(
+                'recipes',
+                { 
+                    ...recipe, 
+                    outputQty: parseFloat(recipe.outputQty), 
+                    grossMargin: parseFloat(recipe.grossMargin), 
+                    electricityCost: parseFloat(recipe.electricityCost) 
+                },
+                !initialData
+              );
+
+              if (success) {
+                onClose();
+              } else {
+                setModal({ visible: true, title: '錯誤', message: '食譜儲存失敗。', onConfirm: null });
+              }
+            };
 
             return (
-              <div key={index} className="flex justify-between text-gray-400 text-3xs">
-                <span className="w-1/2 truncate">{getMaterialName(detail.materialId)}</span>
-                <span className="w-1/4 text-right">{detail.qty} {costUnit}</span>
-                <span className="w-1/4 text-right">${itemCost.toFixed(2)}</span>
+              <div className={`${baseStyle.card} p-4 rounded-xl space-y-3 mb-4`}>
+                <h2 className="text-lg font-bold text-amber-300">{initialData ? '修改食譜' : '新增食譜'}</h2>
+                <form onSubmit={handleSubmit} className="space-y-3 text-sm">
+                  {/* 食品名稱 & 分類 */}
+                  <div className="flex space-x-2">
+                    <input
+                      name="name"
+                      value={recipe.name}
+                      onChange={handleChange}
+                      placeholder="食品名稱 (必填)"
+                      className={`w-2/3 p-2 rounded-lg ${baseStyle.input}`}
+                    />
+                    <select
+                      name="category"
+                      value={recipe.category}
+                      onChange={handleChange}
+                      className={`w-1/3 p-2 rounded-lg ${baseStyle.input}`}
+                    >
+                      {RECIPE_CATEGORIES.map(cat => (
+                        <option key={cat} value={cat}>{cat}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {errors.name && <p className="text-red-400 text-xs mt-1">{errors.name}</p>}
+
+                  {/* 產出數量 & 產量單位 */}
+                  <div className="flex space-x-2">
+                    <div className="w-1/2">
+                      <input
+                        name="outputQty"
+                        type="number"
+                        value={recipe.outputQty || ''} // 使用 recipe.outputQty || ''
+                        onChange={handleChange}
+                        placeholder="產出數量"
+                        className={`w-full p-2 rounded-lg ${baseStyle.input}`}
+                      />
+                      {errors.outputQty && <p className="text-red-400 text-xs mt-1">{errors.outputQty}</p>}
+                    </div>
+                    <select
+                      name="outputUnit"
+                      value={recipe.outputUnit}
+                      onChange={handleChange}
+                      className={`w-1/2 p-2 rounded-lg ${baseStyle.input}`}
+                    >
+                      {RECIPE_OUTPUT_UNITS.map(unit => (
+                        <option key={unit} value={unit}>{unit}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* 毛利率 & 電費成本 */}
+                  <div className="flex space-x-2">
+                    <input
+                      name="grossMargin"
+                      type="number"
+                      value={recipe.grossMargin || ''} // 使用 recipe.grossMargin || ''
+                      onChange={handleChange}
+                      placeholder="毛利率 (%)"
+                      min="0"
+                      max="100"
+                      className={`w-1/2 p-2 rounded-lg ${baseStyle.input}`}
+                    />
+                    <input
+                      name="electricityCost"
+                      type="number"
+                      step="0.01"
+                      value={recipe.electricityCost || ''} // 使用 recipe.electricityCost || ''
+                      onChange={handleChange}
+                      placeholder="電費成本 ($)"
+                      min="0"
+                      className={`w-1/2 p-2 rounded-lg ${baseStyle.input}`}
+                    />
+                  </div>
+
+                  {/* 食材配方明細 */}
+                  <DetailSection
+                    title="食材配方 (原料清單)"
+                    details={recipe.ingredientDetails}
+                    type="ingredientDetails"
+                    allMaterials={rawMaterials}
+                    newDetail={newIngredient}
+                    setNewDetail={setNewIngredient}
+                    handleAdd={handleAddDetail}
+                    handleDelete={handleDeleteDetail}
+                    getMaterialName={getMaterialName}
+                  />
+
+                  {/* 包材明細 */}
+                  <DetailSection
+                    title="包材明細 (包材清單)"
+                    details={recipe.packagingDetails}
+                    type="packagingDetails"
+                    allMaterials={packagingMaterials}
+                    newDetail={newPackaging}
+                    setNewDetail={setNewPackaging}
+                    handleAdd={handleAddDetail}
+                    handleDelete={handleDeleteDetail}
+                    getMaterialName={getMaterialName}
+                  />
+
+                  <div className="flex justify-end space-x-2 pt-2">
+                    <button type="button" onClick={onClose} className={`${baseStyle.buttonSecondary} px-4 py-2 text-xs rounded-full`}>取消</button>
+                    <button type="submit" className={`${baseStyle.buttonPrimary} px-4 py-2 text-xs rounded-full`}>儲存食譜</button>
+                  </div>
+                </form>
               </div>
             );
-          })}
-        </div>
-      );
-    };
+          };
 
-    return (
-      <div className={`mt-3 p-3 rounded-lg border ${isAnalysis ? 'border-amber-500/50' : 'border-amber-900/50'} bg-gray-900/50 text-3xs space-y-2`}>
-        {isAnalysis && (
-          <>
-            <p className="font-bold text-amber-300 text-sm">{recipe.name} ({recipe.category})</p>
-            <p className="text-gray-400">總產出: {recipe.outputQty} {recipe.outputUnit} | 毛利率: {recipe.grossMargin}%</p>
-          </>
-        )}
+          const DetailSection = ({ title, details, type, allMaterials, newDetail, setNewDetail, handleAdd, handleDelete, getMaterialName }) => {
+            return (
+              <div className="border border-amber-900/50 p-3 rounded-lg space-y-2">
+                <h3 className="text-amber-400 font-semibold text-xs">{title}</h3>
+                {/* 新增明細 */}
+                <div className="flex space-x-2">
+                  <select
+                    value={newDetail.materialId}
+                    onChange={(e) => setNewDetail(prev => ({ ...prev, materialId: e.target.value }))}
+                    className={`w-1/2 p-2 text-xs rounded-lg ${baseStyle.input}`}
+                  >
+                    <option value="">選擇物料...</option>
+                    {allMaterials.map(m => (
+                      <option key={m.id} value={m.id}>{m.name}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={newDetail.qty || ''} // 使用 newDetail.qty || ''
+                    onChange={(e) => setNewDetail(prev => ({ ...prev, qty: e.target.value }))}
+                    placeholder="用量"
+                    className={`w-1/4 p-2 text-xs rounded-lg ${baseStyle.input}`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleAdd(type === 'ingredientDetails' ? 'ingredient' : 'packaging')}
+                    className={`${baseStyle.buttonSecondary} w-1/4 p-2 text-3xs rounded-full`}
+                    disabled={!newDetail.materialId}
+                  >
+                    加入
+                  </button>
+                </div>
 
-        {renderDetails(recipe.ingredientDetails, 'ingredient')}
-        {renderDetails(recipe.packagingDetails, 'packaging')}
-
-        {/* 成本總結 */}
-        <div className="pt-2 border-t border-amber-900/50 space-y-0.5">
-          <div className="flex justify-between font-bold text-gray-200">
-            <span>電費成本:</span>
-            <span>${(recipe.electricityCost || 0).toFixed(2)}</span>
-          </div>
-          <div className="flex justify-between font-bold text-amber-300">
-            <span>總材料成本:</span>
-            <span>${totalCost.toFixed(2)}</span>
-          </div>
-          <div className="flex justify-between font-bold text-amber-500 text-sm pt-1">
-            <span>單份成本 ({recipe.outputUnit}):</span>
-            <span>${costPerUnit.toFixed(2)}</span>
-          </div>
-          <div className="flex justify-between font-bold text-green-400 text-sm">
-            <span>建議售價 ({recipe.outputUnit}):</span>
-            <span>${sellingPrice.toFixed(2)}</span>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // --- UI 元件: 總覽與分析頁面 ---
-
-  const AnalysisPage = () => {
-    const [selectedCategory, setSelectedCategory] = useState(RECIPE_CATEGORIES[0]);
-
-    const categorizedRecipes = useMemo(() => {
-      return recipes.filter(r => r.category === selectedCategory);
-    }, [recipes, selectedCategory]);
-
-    return (
-      <div className="p-4 space-y-4">
-        <h1 className="text-xl font-extrabold text-amber-300 border-b border-amber-800 pb-2">總覽與成本分析</h1>
-        {/* 分類下拉式選單 */}
-        <select
-          value={selectedCategory}
-          onChange={(e) => setSelectedCategory(e.target.value)}
-          className={`w-full p-2 rounded-lg ${baseStyle.input} text-sm`}
-        >
-          {RECIPE_CATEGORIES.map(cat => (
-            <option key={cat} value={cat}>{cat}</option>
-          ))}
-        </select>
-
-        <p className="text-sm text-gray-400">分類：<span className="font-semibold text-amber-300">{selectedCategory}</span> 的成品明細與單價分析。</p>
-
-        {/* 成品清單及明細 */}
-        <div className="space-y-4">
-          {categorizedRecipes.length > 0 ? (
-            categorizedRecipes.map(recipe => (
-              <RecipeDetailView
-                key={recipe.id}
-                recipe={recipe}
-                costMap={costMap}
-                getMaterialName={getMaterialName}
-                isAnalysis={true} // 啟用分析視圖的樣式
-              />
-            ))
-          ) : (
-            <p className="text-center text-gray-500 pt-4 text-sm">此分類下沒有食譜資料。</p>
-          )}
-        </div>
-      </div>
-    );
-  };
+                {/* 明細清單 */}
+                <div className="space-y-1 max-h-32 overflow-y-auto">
+                  {details.map((detail, index) => {
+                    const material = allMaterials.find(m => m.id === detail.materialId);
+                    const unit = material ? material.costUnit : '?';
+                    return (
+                      <div key={index} className="flex justify-between items-center bg-gray-700/50 p-1.5 rounded-md text-xs">
+                        <span className="text-gray-200">{getMaterialName(detail.materialId)}</span>
+                        <span className="text-amber-300">{detail.qty} {unit}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(type, index)}
+                          className="text-red-400 hover:text-red-300 text-xs"
+                        >
+                          (X)
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          };
 
 
-  // --- 導航與主佈局 ---
+          // --- UI 元件: 食譜定價清單 ---
 
-  const renderPage = () => {
-    switch (currentPage) {
-      case 'rawMaterials':
-        return <MaterialListPage
-          title="原料資料庫"
-          data={rawMaterials}
-          collectionName="rawMaterials"
-          costUnits={RAW_MATERIAL_COST_UNITS}
-          priceUnits={RAW_MATERIAL_PRICE_UNITS}
-        />;
-      case 'packagingMaterials':
-        return <MaterialListPage
-          title="包材管理"
-          data={packagingMaterials}
-          collectionName="packagingMaterials"
-          costUnits={PACKAGING_COST_UNITS}
-          priceUnits={PACKAGING_PRICE_UNITS}
-        />;
-      case 'recipes':
-        return <RecipePricingPage />;
-      case 'analysis':
-        return <AnalysisPage />;
-      default:
-        return <h1 className="text-xl p-4 text-amber-300">歡迎使用</h1>;
-    }
-  };
+          const RecipePricingPage = () => {
+            const [search, setSearch] = useState('');
+            const [editRecipe, setEditRecipe] = useState(null);
+            const [showForm, setShowForm] = useState(false);
+            const [detailRecipe, setDetailRecipe] = useState(null);
 
-  if (!isAuthReady) {
-    return (
-      <div className={`h-screen w-full flex items-center justify-center ${baseStyle.bg}`}>
-        <p className="text-lg text-amber-400">載入中... (App ID: {appId})</p>
-      </div>
-    );
-  }
+            const filteredRecipes = useMemo(() => {
+              return recipes.filter(r =>
+                r.name.toLowerCase().includes(search.toLowerCase()) || r.category.includes(search)
+              );
+            }, [recipes, search]);
 
-  return (
-    <div className={`min-h-screen ${baseStyle.bg} font-sans pb-16`}>
-      <div className="max-w-md mx-auto min-h-screen shadow-2xl shadow-black">
-        {/* 標題與用戶 ID */}
-        <header className="sticky top-0 z-10 p-4 bg-gray-900 border-b border-amber-500/50 flex justify-between items-center">
-          <h1 className="text-2xl font-black text-amber-300">甜點成本分析 (Dessert Cost)</h1>
-          <div className="text-3xs text-gray-500 text-right">
-            <p>User ID (共享):</p>
-            <p className="truncate w-24 text-amber-500">{userId || 'N/A'}</p>
-          </div>
-        </header>
+            return (
+              <div className="p-4 space-y-4">
+                <h1 className="text-xl font-extrabold text-amber-300 border-b border-amber-800 pb-2">食譜定價管理</h1>
 
-        {/* 內容區 */}
-        <main className="flex-1 overflow-y-auto">
-          {renderPage()}
-        </main>
+                {/* 搜尋欄 */}
+                <input
+                  type="text"
+                  placeholder="搜尋食品名稱或分類..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className={`w-full p-2 rounded-lg ${baseStyle.input} text-sm`}
+                />
 
-        {/* 底部導航欄 (App 樣式) */}
-        <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto z-20 bg-gray-900 border-t border-amber-500/50 shadow-2xl">
-          <div className="flex justify-around py-3">
-            {[
-              { key: 'rawMaterials', label: '原料資料庫' },
-              { key: 'packagingMaterials', label: '包材管理' },
-              { key: 'recipes', label: '食譜定價' },
-              { key: 'analysis', label: '總覽與分析' },
-            ].map((tab) => (
-              <button
-                key={tab.key}
-                onClick={() => setCurrentPage(tab.key)}
-                className={`flex-1 text-center text-xs font-medium transition-colors ${
-                  currentPage === tab.key
-                    ? 'text-amber-400 border-b-2 border-amber-400'
-                    : 'text-gray-500 hover:text-amber-500'
-                } pb-1`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-        </nav>
-      </div>
-      <Modal />
-    </div>
-  );
-};
+                {/* 新增/匯出按鈕 */}
+                <div className="flex justify-between items-center text-xs">
+                  <button
+                    onClick={() => { setShowForm(true); setEditRecipe(null); setDetailRecipe(null); }}
+                    className={`${baseStyle.buttonPrimary} px-3 py-1.5 rounded-full`}
+                  >
+                    + 新增食譜
+                  </button>
+                  <button
+                    onClick={() => exportToExcel(filteredRecipes.map(r => ({ ...r, ...calculateRecipeCosts(r) })), '食譜定價清單')}
+                    className={`${baseStyle.buttonSecondary} px-3 py-1.5 rounded-full`}
+                  >
+                    匯出 CSV
+                  </button>
+                </div>
 
-export default App;
+                {(showForm || editRecipe) && (
+                  <RecipeForm
+                    initialData={editRecipe}
+                    onClose={() => { setShowForm(false); setEditRecipe(null); }}
+                  />
+                )}
+
+                {/* 食譜清單 */}
+                <div className="space-y-2">
+                  {filteredRecipes.map((recipe) => {
+                    const { costPerUnit, sellingPrice } = calculateRecipeCosts(recipe);
+                    return (
+                      <div key={recipe.id} className={`${baseStyle.card} p-3 rounded-lg shadow-md text-xs`}>
+                        <div className="flex justify-between items-start">
+                          <div className="flex-1 min-w-0">
+                            <p className="font-semibold text-amber-300 truncate">{recipe.name}</p>
+                            <p className="text-gray-400 text-2xs">{recipe.category} ({recipe.outputQty} {recipe.outputUnit})</p>
+                          </div>
+                          <div className="ml-4 text-right">
+                            <p className="font-bold text-lg text-amber-500">${sellingPrice.toFixed(2)}</p>
+                            <p className="text-gray-500 text-3xs">建議售價</p>
+                          </div>
+                        </div>
+
+                        <div className="flex justify-between text-gray-400 mt-1 text-3xs border-t border-amber-900/50 pt-1">
+                          <p>毛利率: {recipe.grossMargin}%</p>
+                          <p>單份成本: ${costPerUnit.toFixed(2)}</p>
+                        </div>
+
+                        <div className="flex justify-end space-x-2 mt-2">
+                          <button
+                            onClick={() => setDetailRecipe(detailRecipe && detailRecipe.id === recipe.id ? null : recipe)}
+                            className={`${baseStyle.buttonSecondary} px-3 py-1 text-3xs rounded-full`}
+                          >
+                            {detailRecipe && detailRecipe.id === recipe.id ? '隱藏明細' : '明細'}
+                          </button>
+                          <button
+                            onClick={() => setEditRecipe(recipe)}
+                            className={`${baseStyle.buttonSecondary} px-3 py-1 text-3xs rounded-full`}
+                          >
+                            修改
+                          </button>
+                          <button
+                            onClick={() => deleteItem('recipes', recipe.id)}
+                            className="bg-red-700 hover:bg-red-800 text-white px-3 py-1 text-3xs rounded-full"
+                          >
+                            刪除
+                          </button>
+                        </div>
+
+                        {/* 明細展開區塊 */}
+                        {detailRecipe && detailRecipe.id === recipe.id && (
+                          <RecipeDetailView recipe={recipe} costMap={costMap} getMaterialName={getMaterialName} rawMaterials={rawMaterials} packagingMaterials={packagingMaterials} />
+                        )}
+                      </div>
+                    );
+                  })}
+                  {filteredRecipes.length === 0 && (
+                    <p className="text-center text-gray-500 pt-4 text-sm">找不到食譜資料。</p>
+                  )}
+                </div>
+              </div>
+            );
+          };
+
+          // --- UI 元件: 食譜明細視圖 (用於定價和總覽) ---
+
+          const RecipeDetailView = ({ recipe, costMap, getMaterialName, isAnalysis = false }) => {
+            const { totalCost, costPerUnit, sellingPrice } = calculateRecipeCosts(recipe);
+
+            const renderDetails = (details, type) => {
+              return (
+                <div className="space-y-1">
+                  <p className="font-bold text-amber-400 text-2xs mb-1">{type === 'ingredient' ? '食材成本明細' : '包材成本明細'}</p>
+                  {(details || []).map((detail, index) => {
+                    const material = [...rawMaterials, ...packagingMaterials].find(m => m.id === detail.materialId);
+                    const unitCost = costMap.get(detail.materialId) || 0;
+                    const itemCost = unitCost * detail.qty;
+                    const costUnit = material?.costUnit || '?';
+
+                    return (
+                      <div key={index} className="flex justify-between text-gray-400 text-3xs">
+                        <span className="w-1/2 truncate">{getMaterialName(detail.materialId)}</span>
+                        <span className="w-1/4 text-right">{detail.qty} {costUnit}</span>
+                        <span className="w-1/4 text-right">${itemCost.toFixed(2)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            };
+
+            return (
+              <div className={`mt-3 p-3 rounded-lg border ${isAnalysis ? 'border-amber-500/50' : 'border-amber-900/50'} bg-gray-900/50 text-3xs space-y-2`}>
+                {isAnalysis && (
+                  <>
+                    <p className="font-bold text-amber-300 text-sm">{recipe.name} ({recipe.category})</p>
+                    <p className="text-gray-400">總產出: {recipe.outputQty} {recipe.outputUnit} | 毛利率: {recipe.grossMargin}%</p>
+                  </>
+                )}
+
+                {renderDetails(recipe.ingredientDetails, 'ingredient')}
+                {renderDetails(recipe.packagingDetails, 'packaging')}
+
+                {/* 成本總結 */}
+                <div className="pt-2 border-t border-amber-900/50 space-y-0.5">
+                  <div className="flex justify-between font-bold text-gray-200">
+                    <span>電費成本:</span>
+                    <span>${(recipe.electricityCost || 0).toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between font-bold text-amber-300">
+                    <span>總材料成本:</span>
+                    <span>${totalCost.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between font-bold text-amber-500 text-sm pt-1">
+                    <span>單份成本 ({recipe.outputUnit}):</span>
+                    <span>${costPerUnit.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between font-bold text-green-400 text-sm">
+                    <span>建議售價 ({recipe.outputUnit}):</span>
+                    <span>${sellingPrice.toFixed(2)}</span>
+                  </div>
+                </div>
+              </div>
+            );
+          };
+
+          // --- UI 元件: 總覽與分析頁面 ---
+
+          const AnalysisPage = () => {
+            const [selectedCategory, setSelectedCategory] = useState(RECIPE_CATEGORIES[0]);
+
+            const categorizedRecipes = useMemo(() => {
+              return recipes.filter(r => r.category === selectedCategory);
+            }, [recipes, selectedCategory]);
+
+            return (
+              <div className="p-4 space-y-4">
+                <h1 className="text-xl font-extrabold text-amber-300 border-b border-amber-800 pb-2">總覽與成本分析</h1>
+                {/* 分類下拉式選單 */}
+                <select
+                  value={selectedCategory}
+                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  className={`w-full p-2 rounded-lg ${baseStyle.input} text-sm`}
+                >
+                  {RECIPE_CATEGORIES.map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
+
+                <p className="text-sm text-gray-400">分類：<span className="font-semibold text-amber-300">{selectedCategory}</span> 的成品明細與單價分析。</p>
+
+                {/* 成品清單及明細 */}
+                <div className="space-y-4">
+                  {categorizedRecipes.length > 0 ? (
+                    categorizedRecipes.map(recipe => (
+                      <RecipeDetailView
+                        key={recipe.id}
+                        recipe={recipe}
+                        costMap={costMap}
+                        getMaterialName={getMaterialName}
+                        isAnalysis={true} // 啟用分析視圖的樣式
+                      />
+                    ))
+                  ) : (
+                    <p className="text-center text-gray-500 pt-4 text-sm">此分類下沒有食譜資料。</p>
+                  )}
+                </div>
+              </div>
+            );
+          };
+
+
+          // --- 導航與主佈局 ---
+
+          const renderPage = () => {
+            switch (currentPage) {
+              case 'rawMaterials':
+                return <MaterialListPage
+                  title="原料資料庫"
+                  data={rawMaterials}
+                  collectionName="rawMaterials"
+                  costUnits={RAW_MATERIAL_COST_UNITS}
+                  priceUnits={RAW_MATERIAL_PRICE_UNITS}
+                />;
+              case 'packagingMaterials':
+                return <MaterialListPage
+                  title="包材管理"
+                  data={packagingMaterials}
+                  collectionName="packagingMaterials"
+                  costUnits={PACKAGING_COST_UNITS}
+                  priceUnits={PACKAGING_PRICE_UNITS}
+                />;
+              case 'recipes':
+                return <RecipePricingPage />;
+              case 'analysis':
+                return <AnalysisPage />;
+              default:
+                return <h1 className="text-xl p-4 text-amber-300">歡迎使用</h1>;
+            }
+          };
+
+          if (!isAuthReady) {
+            return (
+              <div className={`h-screen w-full flex items-center justify-center ${baseStyle.bg}`}>
+                <p className="text-lg text-amber-400">載入中... (App ID: {appId})</p>
+              </div>
+            );
+          }
+
+          return (
+            <div className={`min-h-screen ${baseStyle.bg} font-sans pb-16`}>
+              <div className="max-w-md mx-auto min-h-screen shadow-2xl shadow-black">
+                {/* 標題與用戶 ID */}
+                <header className="sticky top-0 z-10 p-4 bg-gray-900 border-b border-amber-500/50 flex justify-between items-center">
+                  <h1 className="text-2xl font-black text-amber-300">甜點成本分析 (Dessert Cost)</h1>
+                  <div className="text-3xs text-gray-500 text-right">
+                    <p>User ID (共享):</p>
+                    <p className="truncate w-24 text-amber-500">{userId || 'N/A'}</p>
+                  </div>
+                </header>
+
+                {/* 內容區 */}
+                <main className="flex-1 overflow-y-auto">
+                  {renderPage()}
+                </main>
+
+                {/* 底部導航欄 (App 樣式) */}
+                <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto z-20 bg-gray-900 border-t border-amber-500/50 shadow-2xl">
+                  <div className="flex justify-around py-3">
+                    {[
+                      { key: 'rawMaterials', label: '原料資料庫' },
+                      { key: 'packagingMaterials', label: '包材管理' },
+                      { key: 'recipes', label: '食譜定價' },
+                      { key: 'analysis', label: '總覽與分析' },
+                    ].map((tab) => (
+                      <button
+                        key={tab.key}
+                        onClick={() => setCurrentPage(tab.key)}
+                        className={`flex-1 text-center text-xs font-medium transition-colors ${
+                          currentPage === tab.key
+                            ? 'text-amber-400 border-b-2 border-amber-400'
+                            : 'text-gray-500 hover:text-amber-500'
+                        } pb-1`}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+                </nav>
+              </div>
+              <Modal />
+            </div>
+          );
+        };
+
+        // 渲染應用程式到 DOM
+        const container = document.getElementById('root');
+        const root = ReactDOM.createRoot(container);
+        root.render(<App />);
+
+    </script>
+</body>
+</html>
